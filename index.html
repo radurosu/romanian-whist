@@ -16,9 +16,13 @@ body {
   font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
   background: #1a5c2a;
   color: #fff;
-  height: 100vh;
+  height: 100dvh;
+  height: 100vh; /* fallback for older browsers */
   overflow: hidden;
   user-select: none;
+}
+@supports (height: 100dvh) {
+  body { height: 100dvh; }
 }
 
 /* ─── Setup Screen ─── */
@@ -27,7 +31,7 @@ body {
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  height: 100vh;
+  height: 100dvh;
   gap: 30px;
 }
 #setup-screen h1 {
@@ -58,7 +62,7 @@ body {
 /* ─── Game Layout ─── */
 #game-screen {
   display: none;
-  height: 100vh;
+  height: 100dvh;
   flex-direction: column;
 }
 #game-screen.active { display: flex; }
@@ -457,74 +461,93 @@ body {
 
 /* ─── Mobile Responsive ─── */
 @media (max-width: 600px) {
-  #setup-screen h1 { font-size: 36px; }
-  #setup-screen p { font-size: 16px; }
-  .player-select { flex-wrap: wrap; justify-content: center; gap: 10px; }
-  .player-select button, .btn { padding: 10px 20px; font-size: 16px; }
+  body { height: 100dvh; }
+  #setup-screen { height: 100dvh; gap: 20px; }
+  #setup-screen h1 { font-size: 32px; }
+  #setup-screen p { font-size: 15px; }
+  .player-select { flex-wrap: wrap; justify-content: center; gap: 8px; }
+  .player-select button, .btn { padding: 10px 18px; font-size: 15px; }
+  #game-screen { height: 100dvh; }
 
+  /* Scoreboard: single compact line */
   #scoreboard {
-    font-size: 13px;
-    padding: 6px 10px;
-    gap: 8px;
+    font-size: 11px;
+    padding: 4px 8px;
+    gap: 4px;
+    line-height: 1.3;
   }
-  #scoreboard .round-info { font-size: 14px; }
-  .score-entry { font-size: 13px; padding: 2px 6px; }
-  .score-entry .bid-info { font-size: 11px; }
+  #scoreboard .round-info { font-size: 12px; }
+  .trump-display span { font-size: 14px !important; }
+  .score-entry { font-size: 11px; padding: 1px 4px; }
+  .score-entry .bid-info { font-size: 10px; margin-left: 2px; }
 
+  /* Grid: tight, most space to center */
   #play-area {
-    grid-template-columns: 50px 1fr 50px;
-    grid-template-rows: 70px 1fr 120px;
+    grid-template-columns: 44px 1fr 44px;
+    grid-template-rows: 55px 1fr 100px;
   }
 
-  .opponent-area .player-label { font-size: 12px; padding: 2px 6px; }
+  /* Opponents: tiny labels, small cards */
+  .opponent-area { gap: 2px; }
+  .opponent-area .player-label { font-size: 10px; padding: 1px 4px; }
+  .opponent-cards { display: flex; }
 
-  #trick-area { width: 240px; height: 200px; }
-  .trick-card.pos-0 { transform: translate(-50%, 5px); }
-  .trick-card.pos-1 { transform: translate(-110px, -50px); }
-  .trick-card.pos-2 { transform: translate(-50%, -100px); }
-  .trick-card.pos-3 { transform: translate(45px, -50px); }
-  .trick-card.pos-4 { transform: translate(-85px, -100px); }
-  .trick-card.pos-5 { transform: translate(20px, -100px); }
+  /* Trick area: scaled for phone */
+  #trick-area { width: 200px; height: 170px; }
+  .trick-card.pos-0 { transform: translate(-50%, 0); }
+  .trick-card.pos-1 { transform: translate(-90px, -42px); }
+  .trick-card.pos-2 { transform: translate(-50%, -85px); }
+  .trick-card.pos-3 { transform: translate(30px, -42px); }
+  .trick-card.pos-4 { transform: translate(-70px, -85px); }
+  .trick-card.pos-5 { transform: translate(10px, -85px); }
 
-  .trick-card .trick-label { font-size: 9px; bottom: -16px; }
-  .trick-card .lead-badge { font-size: 7px; top: -11px; }
+  .trick-card .trick-label { font-size: 8px; bottom: -14px; }
+  .trick-card .lead-badge { font-size: 6px; top: -10px; }
 
-  #trump-display-area .label { font-size: 11px; }
+  /* Trump display */
+  #trump-display-area { top: 5px; right: 5px; gap: 2px; }
+  #trump-display-area .label { font-size: 9px; }
 
-  .card { width: 60px; height: 88px; }
-  .card .corner .rank { font-size: 14px; }
-  .card .corner .suit-sym { font-size: 11px; }
-  .card .top-left { top: 3px; left: 4px; }
-  .card .bottom-right { bottom: 3px; right: 4px; }
-  .card .center-pip { font-size: 26px; }
+  /* Cards: phone-sized */
+  .card { width: 52px; height: 76px; border-radius: 6px; }
+  .card .corner .rank { font-size: 13px; }
+  .card .corner .suit-sym { font-size: 10px; }
+  .card .top-left { top: 2px; left: 3px; }
+  .card .bottom-right { bottom: 2px; right: 3px; }
+  .card .center-pip { font-size: 22px; }
 
-  .card.mini { width: 36px; height: 52px; }
-  .card.mini .corner .rank { font-size: 10px; }
-  .card.mini .corner .suit-sym { font-size: 8px; }
-  .card.mini .center-pip { font-size: 16px; }
+  .card.mini { width: 28px; height: 40px; border-radius: 4px; }
+  .card.mini .corner .rank { font-size: 8px; }
+  .card.mini .corner .suit-sym { font-size: 7px; }
+  .card.mini .center-pip { font-size: 13px; }
+  .card.mini .top-left { top: 1px; left: 2px; }
+  .card.mini .bottom-right { bottom: 1px; right: 2px; }
 
-  #hand-area { padding: 2px 8px; }
-  #hand-area .card { margin: 0 -10px; }
-  #hand-area .card:hover { transform: translateY(-12px) !important; }
+  /* Hand area */
+  #hand-area { padding: 2px 4px; }
+  #hand-area .card { margin: 0 -8px; }
+  #hand-area .card:hover { transform: translateY(-10px) !important; }
 
-  #action-bar { padding: 8px 10px; min-height: 50px; gap: 8px; }
-  #action-bar .status-text { font-size: 15px; }
+  /* Action bar */
+  #action-bar { padding: 6px 8px; min-height: 42px; gap: 6px; }
+  #action-bar .status-text { font-size: 13px; }
 
-  .bid-buttons { flex-wrap: wrap; justify-content: center; gap: 6px; }
-  .bid-btn { width: 36px; height: 36px; font-size: 16px; }
+  .bid-buttons { flex-wrap: wrap; justify-content: center; gap: 5px; }
+  .bid-btn { width: 32px; height: 32px; font-size: 14px; }
 
-  #suggest-btn { padding: 6px 12px; font-size: 13px; }
+  #suggest-btn { padding: 4px 10px; font-size: 12px; }
 
-  #suggestion-box { max-width: 90vw; font-size: 13px; bottom: 65px; padding: 10px 14px; }
-  #suggestion-box .suggestion-reason { font-size: 12px; }
+  #suggestion-box { max-width: 90vw; font-size: 12px; bottom: 55px; padding: 8px 12px; }
+  #suggestion-box .suggestion-reason { font-size: 11px; }
 
-  .overlay-content { padding: 20px; max-width: 95vw; }
-  .overlay-content h2 { font-size: 22px; }
-  .overlay-content table { font-size: 13px; }
-  .overlay-content th, .overlay-content td { padding: 5px 6px; }
-  .overlay-content th { font-size: 12px; }
+  /* Overlays */
+  .overlay-content { padding: 16px; max-width: 95vw; }
+  .overlay-content h2 { font-size: 20px; margin-bottom: 12px; }
+  .overlay-content table { font-size: 12px; }
+  .overlay-content th, .overlay-content td { padding: 4px 5px; }
+  .overlay-content th { font-size: 11px; }
 
-  #history-btn { top: 40px; right: 8px; font-size: 12px; padding: 5px 10px; }
+  #history-btn { top: 4px; right: 8px; font-size: 10px; padding: 3px 8px; }
 }
 </style>
 </head>
@@ -1568,24 +1591,29 @@ function renderAll() {
 
 function renderScoreboard() {
   const el = document.getElementById('scoreboard');
-  let html = `<span class="round-info">Round ${G.currentRoundIndex + 1}/${G.roundSequence.length}</span>`;
-  html += `<span>Cards: ${G.cardsPerPlayer}</span>`;
+  const mobile = window.innerWidth <= 600;
+  let html = `<span class="round-info">R${G.currentRoundIndex + 1}/${G.roundSequence.length}</span>`;
+  if (!mobile) html += `<span>Cards: ${G.cardsPerPlayer}</span>`;
   html += `<span class="trump-display">Trump: `;
   if (G.trumpSuit) {
     const col = SUIT_COLOR[G.trumpSuit] === 'red' ? '#d32f2f' : '#fff';
-    html += `<span style="color:${col};font-size:22px">${SUIT_SYMBOL[G.trumpSuit]}</span>`;
+    html += `<span style="color:${col};font-size:${mobile ? '14' : '22'}px">${SUIT_SYMBOL[G.trumpSuit]}</span>`;
   } else {
-    html += `<span style="opacity:0.6">None</span>`;
+    html += `<span style="opacity:0.6">NT</span>`;
   }
-  html += `</span><span style="opacity:0.4">|</span>`;
-  html += `<span>Dealer: ${G.playerNames[G.dealerIndex]}</span>`;
+  html += `</span>`;
+  if (!mobile) {
+    html += `<span style="opacity:0.4">|</span>`;
+    html += `<span>Dealer: ${G.playerNames[G.dealerIndex]}</span>`;
+  }
   html += `<span style="opacity:0.4">|</span>`;
   for (let p = 0; p < G.numPlayers; p++) {
     html += `<span class="score-entry ${p === 0 ? 'human' : ''}">`;
-    html += `${G.playerNames[p]}: ${G.scores[p]}`;
+    const name = mobile ? G.playerNames[p].slice(0, 3) : G.playerNames[p];
+    html += `${name}:${G.scores[p]}`;
     if (G.bids[p] !== null) {
-      html += `<span class="bid-info">bid ${G.bids[p]}`;
-      if (G.biddingComplete) html += ` / ${G.tricksWon[p]}`;
+      html += `<span class="bid-info"> b${G.bids[p]}`;
+      if (G.biddingComplete) html += `/${G.tricksWon[p]}`;
       html += `</span>`;
     }
     html += `</span>`;
