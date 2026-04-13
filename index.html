@@ -484,7 +484,7 @@ body {
   /* Grid: tight, most space to center */
   #play-area {
     grid-template-columns: 44px 1fr 44px;
-    grid-template-rows: 55px 1fr 100px;
+    grid-template-rows: 55px auto 100px;
   }
 
   /* Opponents: tiny labels, small cards */
@@ -492,11 +492,8 @@ body {
   .opponent-area .player-label { font-size: 10px; padding: 1px 4px; }
   .opponent-cards { display: flex; }
 
-  /* Center: push content down closer to hand */
-  #center-area { align-items: flex-end; padding-bottom: 10px; }
-
   /* Trick area: scaled for phone */
-  #trick-area { width: 200px; height: 170px; }
+  #trick-area { width: 200px; height: 160px; }
   .trick-card.pos-0 { transform: translate(-50%, 0); }
   .trick-card.pos-1 { transform: translate(-90px, -42px); }
   .trick-card.pos-2 { transform: translate(-50%, -85px); }
@@ -1700,13 +1697,7 @@ function renderHand() {
   const legal = isMyTurn ? getLegalMoves(hand, ledSuit, G.trumpSuit) : [];
   const isAutoPlay = isMyTurn && legal.length === 1;
 
-  // Show player bid/tricks status
   let html = '';
-  if (G.biddingComplete) {
-    html += `<span style="font-size:13px;font-weight:600;margin-right:6px;white-space:nowrap">You (${G.bids[0]}/${G.tricksWon[0]})</span>`;
-  } else if (G.bids[0] !== null) {
-    html += `<span style="font-size:13px;font-weight:600;margin-right:6px;white-space:nowrap">You (bid ${G.bids[0]})</span>`;
-  }
   for (const card of hand) {
     const isLegal = legal.some(c => c.rank === card.rank && c.suit === card.suit);
     let cls = isMyTurn ? (isLegal ? 'playable' : 'illegal') : '';
@@ -1719,6 +1710,12 @@ function renderHand() {
       <div class="center-pip">${sym}</div>
       <div class="corner bottom-right"><span class="rank">${card.rank}</span><span class="suit-sym">${sym}</span></div>
     </div>`;
+  }
+  // Show bid/tricks label to the right of cards
+  if (G.biddingComplete) {
+    html += `<span style="font-size:14px;font-weight:600;margin-left:12px;white-space:nowrap">(${G.bids[0]}/${G.tricksWon[0]})</span>`;
+  } else if (G.bids[0] !== null) {
+    html += `<span style="font-size:14px;font-weight:600;margin-left:12px;white-space:nowrap">(b${G.bids[0]})</span>`;
   }
   handArea.innerHTML = html;
 }
