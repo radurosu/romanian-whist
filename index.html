@@ -461,13 +461,13 @@ body {
 
 /* ─── Mobile Responsive ─── */
 @media (max-width: 600px) {
-  body { height: 100dvh; }
-  #setup-screen { height: 100dvh; gap: 20px; }
+  body { height: auto; min-height: 100dvh; overflow: auto; }
+  #setup-screen { height: auto; min-height: 100dvh; gap: 20px; }
   #setup-screen h1 { font-size: 32px; }
   #setup-screen p { font-size: 15px; }
   .player-select { flex-wrap: wrap; justify-content: center; gap: 8px; }
   .player-select button, .btn { padding: 10px 18px; font-size: 15px; }
-  #game-screen { height: 100dvh; }
+  #game-screen { height: auto; min-height: 100dvh; }
 
   /* Scoreboard: single compact line */
   #scoreboard {
@@ -528,8 +528,12 @@ body {
 
   /* Hand area */
   #hand-area { padding: 2px 4px; }
-  #hand-area .card { margin: 0 -8px; }
-  #hand-area .card:hover { transform: translateY(-10px) !important; }
+  #hand-area .card { margin: 0 -8px; transition: none; }
+  #hand-area .card:hover { transform: none !important; box-shadow: none !important; }
+  #hand-area .card.playable { opacity: 1; }
+  #hand-area .card.playable:hover { box-shadow: none !important; }
+  #hand-area .card.illegal { opacity: 0.35; }
+  #hand-area .card.auto-play-glow { animation: none; }
 
   /* Action bar */
   #action-bar { padding: 6px 8px; min-height: 42px; gap: 6px; }
@@ -551,6 +555,16 @@ body {
   .overlay-content th { font-size: 11px; }
 
   #history-btn { top: 4px; right: 8px; font-size: 10px; padding: 3px 8px; }
+}
+
+/* Kill all hover effects on touch devices */
+@media (hover: none) {
+  #hand-area .card { transition: none !important; }
+  #hand-area .card:hover,
+  #hand-area .card.playable:hover {
+    transform: none !important;
+    box-shadow: none !important;
+  }
 }
 </style>
 </head>
@@ -1686,7 +1700,13 @@ function renderHand() {
   const legal = isMyTurn ? getLegalMoves(hand, ledSuit, G.trumpSuit) : [];
   const isAutoPlay = isMyTurn && legal.length === 1;
 
+  // Show player bid/tricks status
   let html = '';
+  if (G.biddingComplete) {
+    html += `<span style="font-size:13px;font-weight:600;margin-right:6px;white-space:nowrap">You (${G.bids[0]}/${G.tricksWon[0]})</span>`;
+  } else if (G.bids[0] !== null) {
+    html += `<span style="font-size:13px;font-weight:600;margin-right:6px;white-space:nowrap">You (bid ${G.bids[0]})</span>`;
+  }
   for (const card of hand) {
     const isLegal = legal.some(c => c.rank === card.rank && c.suit === card.suit);
     let cls = isMyTurn ? (isLegal ? 'playable' : 'illegal') : '';
