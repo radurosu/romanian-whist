@@ -716,12 +716,16 @@ const OPPONENT_AREAS = {
  * ═══════════════════════════════════════════════════════════════════
  */
 const PERSONALITIES = {
-  'Nigel':    { bidBias: -0.3, noise: 0.15, style: 'conservative' },
-  'Margaret': { bidBias:  0.0, noise: 0.08, style: 'analyst' },
-  'Clive':    { bidBias:  0.4, noise: 0.25, style: 'gambler' },
-  'Rupert':   { bidBias:  0.0, noise: 0.20, style: 'spoiler' },
-  'Beatrice': { bidBias: -0.1, noise: 0.18, style: 'opportunist' }
+  'Nigel':    { bidBias: -0.3, noise: 0.15, style: 'conservative', face: '🐢' },
+  'Margaret': { bidBias:  0.0, noise: 0.08, style: 'analyst',      face: '🦉' },
+  'Clive':    { bidBias:  0.4, noise: 0.25, style: 'gambler',      face: '🦁' },
+  'Rupert':   { bidBias:  0.0, noise: 0.20, style: 'spoiler',      face: '🐍' },
+  'Beatrice': { bidBias: -0.1, noise: 0.18, style: 'opportunist',  face: '🦊' }
 };
+
+function getFace(name) {
+  return (PERSONALITIES[name] || {}).face || '🃏';
+}
 
 function getPersonality(playerIndex) {
   const name = G.playerNames[playerIndex];
@@ -1513,8 +1517,9 @@ function showRoundResult(roundScores) {
   for (let p = 0; p < G.numPlayers; p++) {
     const sc = roundScores[p];
     const cls = sc > 0 ? 'positive' : sc < 0 ? 'negative' : 'zero';
+    const face = p === 0 ? '🐺' : getFace(G.playerNames[p]);
     html += `<tr>
-      <td>${G.playerNames[p]}</td>
+      <td>${face} ${G.playerNames[p]}</td>
       <td>${G.bids[p]}</td>
       <td>${G.tricksWon[p]}</td>
       <td class="${cls}">${sc > 0 ? '+' : ''}${sc}</td>
@@ -1572,7 +1577,10 @@ function showHistory() {
   let html = `<div class="overlay" onclick="if(event.target===this)removeOverlays()"><div class="overlay-content" style="max-width:850px;max-height:80vh;overflow:auto">`;
   html += `<h2>Round History</h2>`;
   html += `<table><tr><th>Rnd</th><th>Cards</th><th>Trump</th>`;
-  for (let p = 0; p < G.numPlayers; p++) html += `<th>${G.playerNames[p]}</th>`;
+  for (let p = 0; p < G.numPlayers; p++) {
+    const face = p === 0 ? '🐺' : getFace(G.playerNames[p]);
+    html += `<th>${face} ${G.playerNames[p]}</th>`;
+  }
   html += `</tr>`;
   for (let r = 0; r < G.roundHistory.length; r++) {
     const h = G.roundHistory[r];
@@ -1623,10 +1631,12 @@ function renderScoreboard() {
   html += `<span style="opacity:0.4">|</span>`;
   for (let p = 0; p < G.numPlayers; p++) {
     html += `<span class="score-entry ${p === 0 ? 'human' : ''}">`;
-    const name = mobile ? G.playerNames[p].slice(0, 3) : G.playerNames[p];
-    html += `${name}:${G.scores[p]}`;
+    const fullName = G.playerNames[p];
+    const face = p === 0 ? '🐺' : getFace(fullName);
+    const name = mobile ? fullName.slice(0, 3) : fullName;
+    html += `${face}${name}:${G.scores[p]}`;
     if (G.bids[p] !== null) {
-      html += `<span class="bid-info"> b${G.bids[p]}`;
+      html += `<span class="bid-info"> ${G.bids[p]}`;
       if (G.biddingComplete) html += `/${G.tricksWon[p]}`;
       html += `</span>`;
     }
@@ -1646,7 +1656,8 @@ function renderOpponents() {
       : G.phase === 'playing' ? currentPlayerToAct() === p : false;
     const isLeader = G.phase === 'playing' && G.trickLeaderIndex === p && G.currentTrick.length === 0;
 
-    let label = `<div class="player-label ${isActive ? 'active-player' : ''} ${isLeader ? 'trick-leader' : ''}">${G.playerNames[p]}`;
+    const face = getFace(G.playerNames[p]);
+    let label = `<div class="player-label ${isActive ? 'active-player' : ''} ${isLeader ? 'trick-leader' : ''}">${face} ${G.playerNames[p]}`;
     if (G.bids[p] !== null) {
       label += ` <span style="opacity:0.7">(${G.bids[p]}`;
       if (G.biddingComplete) label += `/${G.tricksWon[p]}`;
@@ -1673,10 +1684,11 @@ function renderCenter() {
     const isWinner = G.phase === 'trickResult' && G.trickWinnerIndex === entry.playerIndex;
     const isLead = i === 0;
     const name = G.playerNames[entry.playerIndex];
+    const face = entry.playerIndex === 0 ? '🐺' : getFace(name);
     html += `<div class="trick-card pos-${entry.playerIndex}">`;
     if (isLead) html += `<div class="lead-badge">lead</div>`;
     html += cardHTML(entry.card, isWinner ? 'winner-highlight' : '');
-    html += `<div class="trick-label ${isLead ? 'lead-label' : ''}">${name}</div>`;
+    html += `<div class="trick-label ${isLead ? 'lead-label' : ''}">${face} ${name}</div>`;
     html += `</div>`;
   }
   trickArea.innerHTML = html;
