@@ -326,6 +326,35 @@ body {
   border: 2px solid gold;
 }
 
+/* Trick card labels */
+.trick-card .trick-label {
+  position: absolute;
+  left: 50%;
+  transform: translateX(-50%);
+  bottom: -20px;
+  font-size: 11px;
+  font-weight: 600;
+  white-space: nowrap;
+  color: rgba(255,255,255,0.8);
+  text-shadow: 1px 1px 2px rgba(0,0,0,0.7);
+}
+.trick-card .trick-label.lead-label {
+  color: #ffd866;
+}
+.trick-card .lead-badge {
+  position: absolute;
+  top: -14px;
+  left: 50%;
+  transform: translateX(-50%);
+  font-size: 9px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  color: #ffd866;
+  text-shadow: 1px 1px 2px rgba(0,0,0,0.8);
+  white-space: nowrap;
+}
+
 /* ─── Overlays ─── */
 .overlay {
   position: fixed;
@@ -456,6 +485,9 @@ body {
   .trick-card.pos-3 { transform: translate(45px, -50px); }
   .trick-card.pos-4 { transform: translate(-85px, -100px); }
   .trick-card.pos-5 { transform: translate(20px, -100px); }
+
+  .trick-card .trick-label { font-size: 9px; bottom: -16px; }
+  .trick-card .lead-badge { font-size: 7px; top: -11px; }
 
   #trump-display-area .label { font-size: 11px; }
 
@@ -1594,10 +1626,15 @@ function renderOpponents() {
 function renderCenter() {
   const trickArea = document.getElementById('trick-area');
   let html = '';
-  for (const entry of G.currentTrick) {
+  for (let i = 0; i < G.currentTrick.length; i++) {
+    const entry = G.currentTrick[i];
     const isWinner = G.phase === 'trickResult' && G.trickWinnerIndex === entry.playerIndex;
+    const isLead = i === 0;
+    const name = G.playerNames[entry.playerIndex];
     html += `<div class="trick-card pos-${entry.playerIndex}">`;
+    if (isLead) html += `<div class="lead-badge">lead</div>`;
     html += cardHTML(entry.card, isWinner ? 'winner-highlight' : '');
+    html += `<div class="trick-label ${isLead ? 'lead-label' : ''}">${name}</div>`;
     html += `</div>`;
   }
   trickArea.innerHTML = html;
