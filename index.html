@@ -1715,7 +1715,7 @@ function renderHand() {
   if (G.biddingComplete) {
     html += `<span style="font-size:14px;font-weight:600;margin-left:12px;white-space:nowrap">(${G.bids[0]}/${G.tricksWon[0]})</span>`;
   } else if (G.bids[0] !== null) {
-    html += `<span style="font-size:14px;font-weight:600;margin-left:12px;white-space:nowrap">(b${G.bids[0]})</span>`;
+    html += `<span style="font-size:14px;font-weight:600;margin-left:12px;white-space:nowrap">(${G.bids[0]})</span>`;
   }
   handArea.innerHTML = html;
 }
