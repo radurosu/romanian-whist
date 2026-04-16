@@ -926,11 +926,62 @@ function isHighestRemaining(card, hand) {
   return !out.some(c => c.suit === card.suit && RANK_VALUE[c.rank] > RANK_VALUE[card.rank]);
 }
 
+// ─── 1-Card Round Win Probability ───
+// In a 1-card round every player plays exactly one card; the result is a pure
+// rank/trump comparison with no hand management. We compute win probability
+// directly, already scaled for the number of opponents — so the general
+// competition factor and personality bidBias don't apply.
+function compute1CardWinProb(card, numPlayers, trumpSuit) {
+  const val = RANK_VALUE[card.rank];
+  const isTrump = trumpSuit && card.suit === trumpSuit;
+  // Each additional player beyond 3 reduces win probability by ~10%.
+  // Floor at 0.65 so even 6-player estimates stay meaningful.
+  const scale = Math.max(0.65, 1.0 - (numPlayers - 3) * 0.10);
+
+  if (isTrump) {
+    if (val === 14) return 0.97;           // Ace of trump: virtually certain
+    if (val === 13) return 0.88 * scale;   // King — only Ace beats it
+    if (val === 12) return 0.74 * scale;   // Queen
+    if (val === 11) return 0.60 * scale;   // Jack
+    if (val >= 9)   return 0.48 * scale;   // Mid trump (9, 10)
+    return 0.32 * scale;                   // Low trump
+  }
+  if (!trumpSuit) {
+    // No trump suit: pure rank battle
+    if (val === 14) return 0.94 * scale;
+    if (val === 13) return 0.64 * scale;
+    if (val === 12) return 0.38 * scale;
+    if (val === 11) return 0.19 * scale;
+    return 0.07 * scale;
+  }
+  // Non-trump when a trump suit exists: can be trumped by a void opponent
+  if (val === 14) return 0.62 * scale;
+  if (val === 13) return 0.30 * scale;
+  if (val === 12) return 0.14 * scale;
+  return 0.05 * scale;
+}
+
 // ─── Improved AI Bidding ───
 function computeAIBid(playerIndex) {
   const hand = G.hands[playerIndex];
   const cpp = G.cardsPerPlayer;
+  const personality = getPersonality(playerIndex);
   let estimate = 0;
+
+  // ── 1-card rounds: skip the general scoring loop entirely ──
+  // Each player plays one card; it either wins or loses. We use direct win
+  // probability (already player-count-aware) and apply only a small noise
+  // offset — no bidBias, no competition factor.
+  if (cpp === 1) {
+    const pWin = compute1CardWinProb(hand[0], G.numPlayers, G.trumpSuit);
+    const noise = (Math.random() - 0.5) * personality.noise * 0.5;
+    let bid = Math.round(Math.max(0, Math.min(1, pWin + noise)));
+    if (isLastBidder()) {
+      const sum = G.bids.reduce((a, b) => a + (b ?? 0), 0);
+      if (sum + bid === cpp) bid = bid > 0 ? 0 : 1;
+    }
+    return bid;
+  }
 
   // Analyze hand shape
   const suitCounts = {};
@@ -1006,21 +1057,7 @@ function computeAIBid(playerIndex) {
     estimate *= 1.15;
   }
 
-  // 1-card rounds: mostly luck, but aces and trumps are strong
-  if (cpp === 1) {
-    const card = hand[0];
-    const isTrump = G.trumpSuit && card.suit === G.trumpSuit;
-    if (card.rank === 'A' && !G.trumpSuit) estimate = 0.8;
-    else if (card.rank === 'A' && isTrump) estimate = 0.92;
-    else if (card.rank === 'A') estimate = 0.6;
-    else if (isTrump && RANK_VALUE[card.rank] >= 12) estimate = 0.75;
-    else if (isTrump) estimate = 0.55;
-    else if (RANK_VALUE[card.rank] >= 13) estimate = 0.45;
-    else estimate = 0.2;
-  }
-
   // Apply personality bias
-  const personality = getPersonality(playerIndex);
   estimate += personality.bidBias;
 
   // Spoiler adjustment: if others bid high, Rupert bids low (and vice versa)
@@ -1194,10 +1231,14 @@ function chooseAICard(playerIndex, legalMoves, ledSuit) {
         return pickLowest(nonTrump.length > 0 ? nonTrump : legalMoves);
       }
 
-      // Gambler (Clive): lead high aggressively, trumps early
+      // Gambler (Clive): lead high aggressively, trumps early.
+      // In 5-6p games, don't flush a lone trump — more opponents means it's
+      // more likely to be over-trumped or wasted; hold it for a better spot.
       if (personality.style === 'gambler') {
         if (trumpCards.length > 0 && stillNeeded >= 1) {
-          return pickHighest(trumpCards); // Flush out opponents' trumps
+          if (G.numPlayers <= 4 || trumpCards.length >= 2) {
+            return pickHighest(trumpCards); // Flush out opponents' trumps
+          }
         }
         return pickHighest(legalMoves);
       }
@@ -1229,7 +1270,17 @@ function chooseAICard(playerIndex, legalMoves, ledSuit) {
         }
       }
 
-      if (nonTrump.length > 0) return pickHighest(nonTrump);
+      // In 5-6p games, only Aces are worth leading speculatively when there
+      // are no sure winners. Burning a Queen or King into 4-5 opponents is
+      // rarely productive — lead low instead and preserve the high card.
+      if (nonTrump.length > 0) {
+        if (G.numPlayers >= 5) {
+          const aces = nonTrump.filter(c => c.rank === 'A');
+          if (aces.length > 0) return aces[0];
+          return pickLowest(nonTrump);
+        }
+        return pickHighest(nonTrump);
+      }
       return pickHighest(legalMoves);
 
     } else {
@@ -1295,6 +1346,13 @@ function chooseAICard(playerIndex, legalMoves, ledSuit) {
       }
       const sureBeaters = beaters.filter(c => isHighestRemaining(c, hand));
       if (sureBeaters.length > 0) return pickLowest(sureBeaters);
+      // In 5-6p games with 2+ players still to act, committing a non-certain
+      // beater is likely wasteful — it'll probably get over-taken. Duck instead
+      // and save the card for a better spot.
+      if (G.numPlayers >= 5 && playersLeft >= 2) {
+        const ntLosers = legalMoves.filter(c => c.suit !== G.trumpSuit);
+        return pickLowest(ntLosers.length > 0 ? ntLosers : legalMoves);
+      }
       return pickHighest(beaters);
     }
     // Can't beat — dump lowest non-trump
