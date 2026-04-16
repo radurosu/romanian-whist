@@ -121,6 +121,18 @@ body {
   background: rgba(200,168,78,0.5);
   box-shadow: 0 0 8px rgba(200,168,78,0.4);
 }
+/* Prominent bid/tricks display shown below each opponent's name */
+.bid-badge {
+  font-size: 22px;
+  font-weight: 800;
+  background: rgba(200,168,78,0.2);
+  border: 1px solid rgba(200,168,78,0.45);
+  padding: 1px 10px;
+  border-radius: 6px;
+  line-height: 1.3;
+  text-align: center;
+  min-width: 42px;
+}
 .opponent-cards {
   display: flex;
 }
@@ -157,9 +169,14 @@ body {
 .trick-card.pos-2 { transform: translate(-50%, -150px); }
 /* East — center right */
 .trick-card.pos-3 { transform: translate(80px, -70px); }
-/* 5th/6th players */
-.trick-card.pos-4 { transform: translate(-130px, -150px); }
-.trick-card.pos-5 { transform: translate(40px, -150px); }
+/* North-left (5p second north) */
+.trick-card.pos-4 { transform: translate(-140px, -150px); }
+/* North-right (5p third north) */
+.trick-card.pos-5 { transform: translate(30px, -150px); }
+/* West-upper (6p second west player) */
+.trick-card.pos-6 { transform: translate(-170px, -140px); }
+/* East-upper (6p second east player) */
+.trick-card.pos-7 { transform: translate(80px, -140px); }
 
 #trump-display-area {
   position: absolute;
@@ -191,7 +208,7 @@ body {
 #hand-area .card {
   transition: transform 0.2s ease, box-shadow 0.2s ease, opacity 0.2s ease;
   cursor: pointer;
-  margin: 0 -6px;
+  margin: 0 2px;
 }
 #hand-area .card:hover {
   transform: translateY(-20px) !important;
@@ -490,6 +507,7 @@ body {
   /* Opponents: tiny labels, small cards */
   .opponent-area { gap: 2px; }
   .opponent-area .player-label { font-size: 10px; padding: 1px 4px; }
+  .bid-badge { font-size: 13px; padding: 0 4px; min-width: 20px; border-radius: 3px; }
   .opponent-cards { display: flex; }
 
   /* Trick area: scaled for phone */
@@ -498,8 +516,10 @@ body {
   .trick-card.pos-1 { transform: translate(-90px, -42px); }
   .trick-card.pos-2 { transform: translate(-50%, -85px); }
   .trick-card.pos-3 { transform: translate(30px, -42px); }
-  .trick-card.pos-4 { transform: translate(-70px, -85px); }
-  .trick-card.pos-5 { transform: translate(10px, -85px); }
+  .trick-card.pos-4 { transform: translate(-68px, -85px); }
+  .trick-card.pos-5 { transform: translate(12px, -85px); }
+  .trick-card.pos-6 { transform: translate(-90px, -78px); }
+  .trick-card.pos-7 { transform: translate(30px, -78px); }
 
   .trick-card .trick-label { font-size: 8px; bottom: -14px; }
   .trick-card .lead-badge { font-size: 6px; top: -10px; }
@@ -525,7 +545,7 @@ body {
 
   /* Hand area */
   #hand-area { padding: 2px 4px; }
-  #hand-area .card { margin: 0 -8px; transition: none; }
+  #hand-area .card { margin: 0 -4px; transition: none; }
   #hand-area .card:hover { transform: none !important; box-shadow: none !important; }
   #hand-area .card.playable { opacity: 1; }
   #hand-area .card.playable:hover { box-shadow: none !important; }
@@ -736,11 +756,21 @@ function getPersonality(playerIndex) {
 let G = {};
 let autoPlayTimer = null;
 
+// In 3p/4p games, shuffle the AI roster so opponents vary each new game.
+// 5p and 6p keep fixed lineups (Beatrice is only in 6p).
+function pickPlayerNames(numPlayers) {
+  if (numPlayers === 5) return ['You','Nigel','Margaret','Rupert','Clive'];
+  if (numPlayers === 6) return ['You','Nigel','Beatrice','Margaret','Rupert','Clive'];
+  const ai = ['Nigel','Margaret','Clive','Rupert','Beatrice'];
+  const shuffled = ai.slice().sort(() => Math.random() - 0.5);
+  return ['You', ...shuffled.slice(0, numPlayers - 1)];
+}
+
 function initState(numPlayers) {
   const seq = computeRoundSequence(numPlayers);
   G = {
     numPlayers,
-    playerNames: PLAYER_NAMES_MAP[numPlayers],
+    playerNames: pickPlayerNames(numPlayers),
     roundSequence: seq,
     currentRoundIndex: 0,
     dealerIndex: 0,
@@ -1715,14 +1745,15 @@ function renderOpponents() {
     const isLeader = G.phase === 'playing' && G.trickLeaderIndex === p && G.currentTrick.length === 0;
 
     const face = getFace(G.playerNames[p]);
-    let label = `<div class="player-label ${isActive ? 'active-player' : ''} ${isLeader ? 'trick-leader' : ''}">${face} ${G.playerNames[p]}`;
-    if (G.bids[p] !== null) {
-      label += ` <span style="opacity:0.7">(${G.bids[p]}`;
-      if (G.biddingComplete) label += `/${G.tricksWon[p]}`;
-      label += `)</span>`;
-    }
-    label += `</div>`;
+    const label = `<div class="player-label ${isActive ? 'active-player' : ''} ${isLeader ? 'trick-leader' : ''}">${face} ${G.playerNames[p]}</div>`;
     area.insertAdjacentHTML('beforeend', label);
+
+    if (G.bids[p] !== null) {
+      const bidText = G.biddingComplete
+        ? `${G.bids[p]}<span style="opacity:0.55;font-size:0.75em">/${G.tricksWon[p]}</span>`
+        : `${G.bids[p]}`;
+      area.insertAdjacentHTML('beforeend', `<div class="bid-badge">${bidText}</div>`);
+    }
 
     let cardsHTML = '<div class="opponent-cards" style="display:flex">';
     for (let i = 0; i < G.hands[p].length; i++) {
@@ -1734,6 +1765,20 @@ function renderOpponents() {
   }
 }
 
+// Maps a player index to the correct visual slot in the trick area.
+// Slots: 0=south, 1=west, 2=north, 3=east,
+//        4=north-left(5p), 5=north-right(5p),
+//        6=west-upper(6p), 7=east-upper(6p)
+function getTrickPos(playerIndex, numPlayers) {
+  const maps = {
+    3: [0, 1, 3],
+    4: [0, 1, 2, 3],
+    5: [0, 1, 4, 5, 3],
+    6: [0, 1, 6, 2, 3, 7]
+  };
+  return (maps[numPlayers] || maps[4])[playerIndex] ?? playerIndex;
+}
+
 function renderCenter() {
   const trickArea = document.getElementById('trick-area');
   let html = '';
@@ -1743,7 +1788,7 @@ function renderCenter() {
     const isLead = i === 0;
     const name = G.playerNames[entry.playerIndex];
     const face = entry.playerIndex === 0 ? '🐺' : getFace(name);
-    html += `<div class="trick-card pos-${entry.playerIndex}">`;
+    html += `<div class="trick-card pos-${getTrickPos(entry.playerIndex, G.numPlayers)}">`;
     if (isLead) html += `<div class="lead-badge">lead</div>`;
     html += cardHTML(entry.card, isWinner ? 'winner-highlight' : '');
     html += `<div class="trick-label ${isLead ? 'lead-label' : ''}">${face} ${name}</div>`;
