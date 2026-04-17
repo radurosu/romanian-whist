@@ -121,20 +121,24 @@ body {
   background: rgba(200,168,78,0.5);
   box-shadow: 0 0 8px rgba(200,168,78,0.4);
 }
-/* Prominent bid/tricks display shown below each opponent's name */
-.bid-badge {
-  font-size: 22px;
-  font-weight: 800;
-  background: rgba(200,168,78,0.2);
-  border: 1px solid rgba(200,168,78,0.45);
-  padding: 1px 10px;
-  border-radius: 6px;
-  line-height: 1.3;
-  text-align: center;
-  min-width: 42px;
+/* Bid number overlaid on top of the opponent's face-down card stack */
+.card-bid-overlay {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  font-size: 30px;
+  font-weight: 900;
+  color: #fff;
+  text-shadow: 0 2px 10px rgba(0,0,0,1), 0 0 4px rgba(0,0,0,0.9);
+  pointer-events: none;
+  white-space: nowrap;
+  z-index: 10;
+  letter-spacing: 1px;
 }
 .opponent-cards {
   display: flex;
+  position: relative;
 }
 #north-area { grid-column: 2; grid-row: 1; flex-direction: row; }
 #west-area { grid-column: 1; grid-row: 2; }
@@ -208,7 +212,7 @@ body {
 #hand-area .card {
   transition: transform 0.2s ease, box-shadow 0.2s ease, opacity 0.2s ease;
   cursor: pointer;
-  margin: 0 2px;
+  margin: 0 -4px;
 }
 #hand-area .card:hover {
   transform: translateY(-20px) !important;
@@ -507,8 +511,7 @@ body {
   /* Opponents: tiny labels, small cards */
   .opponent-area { gap: 2px; }
   .opponent-area .player-label { font-size: 10px; padding: 1px 4px; }
-  .bid-badge { font-size: 13px; padding: 0 4px; min-width: 20px; border-radius: 3px; }
-  .opponent-cards { display: flex; }
+  .opponent-cards { display: flex; position: relative; }
 
   /* Trick area: scaled for phone */
   #trick-area { width: 200px; height: 160px; }
@@ -545,7 +548,8 @@ body {
 
   /* Hand area */
   #hand-area { padding: 2px 4px; }
-  #hand-area .card { margin: 0 -4px; transition: none; }
+  #hand-area .card { margin: 0 -6px; transition: none; }
+  .card-bid-overlay { font-size: 16px; }
   #hand-area .card:hover { transform: none !important; box-shadow: none !important; }
   #hand-area .card.playable { opacity: 1; }
   #hand-area .card.playable:hover { box-shadow: none !important; }
@@ -1748,17 +1752,16 @@ function renderOpponents() {
     const label = `<div class="player-label ${isActive ? 'active-player' : ''} ${isLeader ? 'trick-leader' : ''}">${face} ${G.playerNames[p]}</div>`;
     area.insertAdjacentHTML('beforeend', label);
 
-    if (G.bids[p] !== null) {
-      const bidText = G.biddingComplete
-        ? `${G.bids[p]}<span style="opacity:0.55;font-size:0.75em">/${G.tricksWon[p]}</span>`
-        : `${G.bids[p]}`;
-      area.insertAdjacentHTML('beforeend', `<div class="bid-badge">${bidText}</div>`);
-    }
-
-    let cardsHTML = '<div class="opponent-cards" style="display:flex">';
+    let cardsHTML = '<div class="opponent-cards">';
     for (let i = 0; i < G.hands[p].length; i++) {
       const ml = i > 0 ? 'margin-left:-18px;' : '';
       cardsHTML += `<div class="card card-back mini" style="${ml}"></div>`;
+    }
+    if (G.bids[p] !== null && G.hands[p].length > 0) {
+      const bidText = G.biddingComplete
+        ? `${G.bids[p]}<span style="opacity:0.7;font-size:0.72em">/${G.tricksWon[p]}</span>`
+        : `${G.bids[p]}`;
+      cardsHTML += `<div class="card-bid-overlay">${bidText}</div>`;
     }
     cardsHTML += '</div>';
     area.insertAdjacentHTML('beforeend', cardsHTML);
