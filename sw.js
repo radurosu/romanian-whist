@@ -1,4 +1,4 @@
-const CACHE = 'wist-v2';
+const CACHE = 'wist-v3';
 const ASSETS = ['./', './index.html', './manifest.json'];
 
 self.addEventListener('install', event => {

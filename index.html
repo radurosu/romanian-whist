@@ -456,6 +456,20 @@ body {
   cursor: pointer;
 }
 #history-btn:hover { background: rgba(0,0,0,0.6); color: #fff; }
+#download-btn {
+  position: fixed;
+  top: 50px;
+  right: 100px;
+  z-index: 500;
+  padding: 8px 16px;
+  font-size: 14px;
+  border-radius: 6px;
+  background: rgba(0,0,0,0.4);
+  color: #ccc;
+  border: 1px solid rgba(255,255,255,0.15);
+  cursor: pointer;
+}
+#download-btn:hover { background: rgba(0,0,0,0.6); color: #fff; }
 
 /* ─── Mobile Responsive ─── */
 @media (max-width: 600px) {
@@ -595,6 +609,7 @@ body {
   <div id="action-bar"></div>
 </div>
 <button id="history-btn" style="display:none" onclick="showHistory()">History</button>
+<button id="download-btn" style="display:none" onclick="downloadGameLogs()">Download Logs</button>
 
 <script>
 // ─── Sound Engine (Web Audio API synth) ───
@@ -661,7 +676,16 @@ const SUITS = ['spades','hearts','diamonds','clubs'];
 const RANK_VALUE = {A:14,K:13,Q:12,J:11,'10':10,'9':9,'8':8,'7':7,'6':6,'5':5,'4':4,'3':3,'2':2};
 const SUIT_SYMBOL = {spades:'\u2660', hearts:'\u2665', diamonds:'\u2666', clubs:'\u2663'};
 const SUIT_COLOR = {spades:'black', hearts:'red', diamonds:'red', clubs:'black'};
-const PLAYER_NAMES_MAP = {
+const ALL_OPPONENTS = ['Viktor','Sasha','Sniper','Katya','Tempo2'];
+
+function pickOpponents(count) {
+  // Shuffle and pick `count` opponents — different mix each game
+  const shuffled = ALL_OPPONENTS.slice().sort(() => Math.random() - 0.5);
+  return shuffled.slice(0, count);
+}
+
+// Will be set dynamically in startGame
+let PLAYER_NAMES_MAP = {
   3: ['You','Viktor','Sasha'],
   4: ['You','Viktor','Sasha','Sniper'],
   5: ['You','Viktor','Sasha','Sniper','Katya'],
@@ -770,8 +794,118 @@ function initState(numPlayers) {
     playedCards: [],       // all cards played this round (for card counting)
     fullDeck: [],          // all cards in the deck this round
     knownVoids: {},        // {playerIndex: {suit: true}} — opponents shown void
-    opponentStats: {}      // {playerIndex: {bids, made}} — cross-round tracking
+    opponentStats: {},     // {playerIndex: {bids, made}} — cross-round tracking
+    gameLog: null          // full game recording
   };
+}
+
+// ─── Game Recording ───
+function initGameLog() {
+  G.gameLog = {
+    timestamp: new Date().toISOString(),
+    numPlayers: G.numPlayers,
+    players: G.playerNames.slice(),
+    rounds: [],
+    _currentRound: null,
+  };
+}
+
+function logRoundStart() {
+  G.gameLog._currentRound = {
+    roundIdx: G.currentRoundIndex,
+    cardsPerPlayer: G.cardsPerPlayer,
+    trump: G.trumpCard ? G.trumpCard.rank + G.trumpCard.suit : null,
+    trumpSuit: G.trumpSuit,
+    hands: {},
+    bids: {},
+    tricks: [],
+    _currentTrick: [],
+  };
+  for (let i = 0; i < G.numPlayers; i++) {
+    G.gameLog._currentRound.hands[i] = G.hands[i].map(c => c.rank + c.suit);
+  }
+}
+
+function logBid(playerIndex, bid) {
+  if (!G.gameLog || !G.gameLog._currentRound) return;
+  G.gameLog._currentRound.bids[playerIndex] = bid;
+}
+
+function logPlay(playerIndex, card) {
+  if (!G.gameLog || !G.gameLog._currentRound) return;
+  const r = G.gameLog._currentRound;
+  r._currentTrick.push({
+    player: playerIndex,
+    name: G.playerNames[playerIndex],
+    card: card.rank + card.suit,
+    trickPosition: r._currentTrick.length,
+    bid: G.bids[playerIndex],
+    tricksWon: G.tricksWon[playerIndex],
+    tricksNeeded: G.bids[playerIndex] - G.tricksWon[playerIndex],
+  });
+}
+
+function logTrickEnd(winnerIndex) {
+  if (!G.gameLog || !G.gameLog._currentRound) return;
+  const r = G.gameLog._currentRound;
+  r.tricks.push({
+    plays: r._currentTrick.slice(),
+    winner: winnerIndex,
+    winnerName: G.playerNames[winnerIndex],
+  });
+  r._currentTrick = [];
+}
+
+function logRoundEnd() {
+  if (!G.gameLog || !G.gameLog._currentRound) return;
+  const r = G.gameLog._currentRound;
+  r.results = {};
+  for (let i = 0; i < G.numPlayers; i++) {
+    r.results[i] = {
+      name: G.playerNames[i],
+      bid: G.bids[i],
+      won: G.tricksWon[i],
+      made: G.tricksWon[i] === G.bids[i],
+      score: G.tricksWon[i] === G.bids[i] ? 5 + G.bids[i] : -Math.abs(G.tricksWon[i] - G.bids[i]),
+      cumulative: G.scores[i],
+    };
+  }
+  G.gameLog.rounds.push(r);
+  G.gameLog._currentRound = null;
+}
+
+function logGameEnd() {
+  if (!G.gameLog) return;
+  G.gameLog.finalScores = {};
+  for (let i = 0; i < G.numPlayers; i++) {
+    G.gameLog.finalScores[i] = { name: G.playerNames[i], score: G.scores[i] };
+  }
+  const winner = G.scores.indexOf(Math.max(...G.scores));
+  G.gameLog.winner = G.playerNames[winner];
+  G.gameLog.winnerScore = G.scores[winner];
+
+  // Save to localStorage
+  try {
+    const logs = JSON.parse(localStorage.getItem('wist-game-logs') || '[]');
+    logs.push(G.gameLog);
+    // Keep last 50 games
+    while (logs.length > 50) logs.shift();
+    localStorage.setItem('wist-game-logs', JSON.stringify(logs));
+  } catch(e) {}
+}
+
+function downloadGameLogs() {
+  try {
+    const logs = JSON.parse(localStorage.getItem('wist-game-logs') || '[]');
+    if (logs.length === 0) { alert('No games recorded yet.'); return; }
+    const blob = new Blob([JSON.stringify(logs, null, 2)], {type: 'application/json'});
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `whist-games-${new Date().toISOString().slice(0,10)}.json`;
+    a.click();
+    URL.revokeObjectURL(url);
+  } catch(e) { alert('Error downloading logs.'); }
 }
 
 function computeRoundSequence(n) {
@@ -819,10 +953,15 @@ function cardHTML(card, extra = '') {
 // ─── Game Flow ───
 function startGame(numPlayers) {
   ensureAudio();
+  // Randomize opponents each game
+  const opponents = pickOpponents(numPlayers - 1);
+  PLAYER_NAMES_MAP[numPlayers] = ['You', ...opponents];
   document.getElementById('setup-screen').style.display = 'none';
   document.getElementById('game-screen').classList.add('active');
   document.getElementById('history-btn').style.display = 'block';
+  document.getElementById('download-btn').style.display = 'block';
   initState(numPlayers);
+  initGameLog();
   startRound();
 }
 
@@ -866,6 +1005,7 @@ function startRound() {
 
   G.currentBidderIndex = (G.dealerIndex + 1) % G.numPlayers;
   G.phase = 'bidding';
+  logRoundStart();
   renderAll();
   if (G.currentBidderIndex !== 0) {
     setTimeout(processAIBid, 600);
@@ -899,6 +1039,7 @@ function isLastBidder() {
 
 function placeBid(playerIndex, bid) {
   G.bids[playerIndex] = bid;
+  logBid(playerIndex, bid);
   sfxBid();
   if (G.bids.filter(b => b !== null).length === G.numPlayers) {
     G.biddingComplete = true;
@@ -1178,31 +1319,49 @@ function analyzeOpponents(playerIndex) {
 }
 
 // ─── 1-Card Round Win Probability (from index2.html) ───
+// Exact 1-card win probability using hypergeometric formula:
+// P(win when leading) = C(pool - beaters, K) / C(pool, K)
+// where pool = deck - 1, K = opponents, beaters = cards that beat ours
 function compute1CardWinProb(card, numPlayers, trumpSuit) {
   const val = RANK_VALUE[card.rank];
   const isTrump = trumpSuit && card.suit === trumpSuit;
-  const scale = Math.max(0.65, 1.0 - (numPlayers - 3) * 0.10);
+  const ranksPerSuit = numPlayers * 2;
+  const usedRanks = ALL_RANKS.slice(0, ranksPerSuit);
+  const deckSize = ranksPerSuit * 4;
+  const pool = deckSize - 1; // all cards except ours
+  const K = numPlayers - 1;  // opponents
 
-  if (isTrump) {
-    if (val === 14) return 0.97;
-    if (val === 13) return 0.88 * scale;
-    if (val === 12) return 0.74 * scale;
-    if (val === 11) return 0.60 * scale;
-    if (val >= 9)   return 0.48 * scale;
-    return 0.32 * scale;
+  // Count cards in pool that beat ours (when we lead our suit)
+  let beaters = 0;
+  for (const s of SUITS) {
+    for (const r of usedRanks) {
+      if (s === card.suit && r === card.rank) continue; // skip our card
+      const v = RANK_VALUE[r];
+      if (trumpSuit) {
+        if (s === trumpSuit && card.suit !== trumpSuit) { beaters++; continue; }
+        if (s !== trumpSuit && card.suit === trumpSuit) continue;
+        if (s === trumpSuit && card.suit === trumpSuit && v > val) { beaters++; continue; }
+      }
+      // Same suit, higher rank
+      if (s === card.suit && v > val) beaters++;
+    }
   }
-  if (!trumpSuit) {
-    if (val === 14) return 0.94 * scale;
-    if (val === 13) return 0.64 * scale;
-    if (val === 12) return 0.38 * scale;
-    if (val === 11) return 0.19 * scale;
-    return 0.07 * scale;
+
+  // P(none of K opponents has a beater) = C(pool-beaters, K) / C(pool, K)
+  if (pool - beaters < K) return 0;
+  return _comb(pool - beaters, K) / _comb(pool, K);
+}
+
+// Binomial coefficient C(n, k)
+function _comb(n, k) {
+  if (k < 0 || k > n) return 0;
+  if (k === 0 || k === n) return 1;
+  if (k > n - k) k = n - k;
+  let result = 1;
+  for (let i = 0; i < k; i++) {
+    result = result * (n - i) / (i + 1);
   }
-  // Non-trump when trump exists
-  if (val === 14) return 0.62 * scale;
-  if (val === 13) return 0.30 * scale;
-  if (val === 12) return 0.14 * scale;
-  return 0.05 * scale;
+  return result;
 }
 
 // ─── Multi-trick Planner (skill >= 5: Boris+) ───
@@ -1218,7 +1377,288 @@ function planTricks(hand, bid, tricksWon) {
 }
 
 // ═══════════════════════════════════════════════════════════════════
-//  AI BIDDING — strategy-specific
+//  PIMC ENGINE — Perfect Information Monte Carlo
+// ═══════════════════════════════════════════════════════════════════
+
+// Fast play-out: simulate remaining tricks with simple rules.
+// All players use the void/highest strategy (fast, no recursion).
+function simPlayOut(hands, bids, tricksWon, trumpSuit, leader, numPlayers) {
+  // Deep copy hands
+  const h = hands.map(hand => hand.slice());
+  const tw = tricksWon.slice();
+  const maxTricks = h[0].length;
+  let ld = leader;
+
+  for (let t = 0; t < maxTricks; t++) {
+    if (h[ld].length === 0) break;
+    const trick = [];
+    let cur = ld;
+    for (let p = 0; p < numPlayers; p++) {
+      if (h[cur].length === 0) { cur = (cur + 1) % numPlayers; continue; }
+      const ledSuit = trick.length > 0 ? trick[0].card.suit : null;
+
+      // Get legal moves
+      let legal = h[cur];
+      if (ledSuit) {
+        const follow = legal.filter(c => c.suit === ledSuit);
+        if (follow.length > 0) legal = follow;
+        else if (trumpSuit) {
+          const trumps = legal.filter(c => c.suit === trumpSuit);
+          if (trumps.length > 0) legal = trumps;
+        }
+      }
+
+      // Simple play: need more tricks → highest, done → lowest
+      const need = tw[cur] < (bids[cur] || 0);
+      let card;
+      if (need) {
+        card = legal.reduce((b, c) => RANK_VALUE[c.rank] > RANK_VALUE[b.rank] ? c : b);
+      } else {
+        card = legal.reduce((b, c) => RANK_VALUE[c.rank] < RANK_VALUE[b.rank] ? c : b);
+      }
+
+      // Remove card from hand
+      h[cur] = h[cur].filter(c => !(c.rank === card.rank && c.suit === card.suit));
+      trick.push({player: cur, card});
+      cur = (cur + 1) % numPlayers;
+    }
+
+    // Determine winner
+    if (trick.length === 0) break;
+    const ls = trick[0].card.suit;
+    let best = trick[0];
+    for (let i = 1; i < trick.length; i++) {
+      if (cardBeats(trick[i].card, best.card, ls)) best = trick[i];
+    }
+    tw[best.player]++;
+    ld = best.player;
+  }
+
+  return tw;
+}
+
+// Score a simulation result: my score minus weighted best opponent score
+function simScore(playerIndex, tricksWon, bids) {
+  const myBid = bids[playerIndex];
+  const myWon = tricksWon[playerIndex];
+  let myScore = myWon === myBid ? 5 + myBid : -Math.abs(myWon - myBid);
+
+  let bestOpp = -Infinity;
+  for (let i = 0; i < bids.length; i++) {
+    if (i === playerIndex || bids[i] === null) continue;
+    const oppScore = tricksWon[i] === bids[i] ? 5 + bids[i] : -Math.abs(tricksWon[i] - bids[i]);
+    bestOpp = Math.max(bestOpp, oppScore);
+  }
+
+  return myScore - 0.3 * (bestOpp > -Infinity ? bestOpp : 0);
+}
+
+// Sample opponent hands from unknown cards, weighted by their bids
+function sampleOpponentHands(myHand, playerIndex) {
+  const unknown = getCardsStillOut(myHand);
+  const np = G.numPlayers;
+  const cardsNeeded = G.hands.map(h => h.length); // cards per opponent
+
+  // Weighted shuffle: high bidders get strong cards
+  const shuffled = unknown.slice();
+  // Sort by strength with randomized bid-weighting
+  shuffled.sort((a, b) => {
+    const sa = RANK_VALUE[a.rank] + Math.random() * 5;
+    const sb = RANK_VALUE[b.rank] + Math.random() * 5;
+    return sb - sa; // strongest first
+  });
+
+  // Deal cards: give stronger cards to higher bidders
+  const oppHands = {};
+  const oppList = [];
+  for (let i = 0; i < np; i++) {
+    if (i === playerIndex) continue;
+    oppHands[i] = [];
+    const bid = G.bids[i] || 0;
+    oppList.push({idx: i, bid, need: cardsNeeded[i]});
+  }
+
+  // Sort opponents by bid (highest first = gets first pick of strong cards)
+  oppList.sort((a, b) => b.bid - a.bid);
+
+  // Round-robin deal from the shuffled deck
+  let cardIdx = 0;
+  let round = 0;
+  const maxRounds = Math.max(...oppList.map(o => o.need));
+  for (let r = 0; r < maxRounds; r++) {
+    for (const opp of oppList) {
+      if (oppHands[opp.idx].length >= opp.need) continue;
+      if (cardIdx >= shuffled.length) break;
+
+      // Check known voids — don't give this card to a void opponent
+      const card = shuffled[cardIdx];
+      if (G.knownVoids[opp.idx] && G.knownVoids[opp.idx][card.suit]) {
+        // Find a non-void card to swap with
+        let swapped = false;
+        for (let j = cardIdx + 1; j < shuffled.length; j++) {
+          if (!G.knownVoids[opp.idx] || !G.knownVoids[opp.idx][shuffled[j].suit]) {
+            [shuffled[cardIdx], shuffled[j]] = [shuffled[j], shuffled[cardIdx]];
+            swapped = true;
+            break;
+          }
+        }
+        if (!swapped && cardIdx < shuffled.length) {
+          // Can't avoid void — just deal it anyway
+        }
+      }
+
+      oppHands[opp.idx].push(shuffled[cardIdx]);
+      cardIdx++;
+    }
+  }
+
+  return oppHands;
+}
+
+// PIMC: choose the best card to play via simulation
+function pimcChooseCard(playerIndex, legalMoves, numSims) {
+  if (legalMoves.length === 1) return legalMoves[0];
+
+  const hand = G.hands[playerIndex];
+  const scores = {};
+  for (const c of legalMoves) scores[c.rank + c.suit] = 0;
+
+  for (let sim = 0; sim < numSims; sim++) {
+    const oppHands = sampleOpponentHands(hand, playerIndex);
+
+    for (const card of legalMoves) {
+      // Build complete hands array
+      const allHands = [];
+      for (let i = 0; i < G.numPlayers; i++) {
+        if (i === playerIndex) {
+          allHands.push(hand.filter(c => !(c.rank === card.rank && c.suit === card.suit)));
+        } else {
+          allHands.push(oppHands[i] || []);
+        }
+      }
+
+      // Play this card into the current trick, then simulate the rest
+      const tw = G.tricksWon.slice();
+      const trickSoFar = G.currentTrick.slice();
+      trickSoFar.push({playerIndex, card});
+
+      let leader = G.trickLeaderIndex;
+
+      if (trickSoFar.length === G.numPlayers) {
+        // Trick complete — resolve it
+        const ls = trickSoFar[0].card.suit;
+        let best = trickSoFar[0];
+        for (let i = 1; i < trickSoFar.length; i++) {
+          if (cardBeats(trickSoFar[i].card, best.card, ls)) best = trickSoFar[i];
+        }
+        tw[best.playerIndex]++;
+        leader = best.playerIndex;
+        // Simulate remaining tricks
+        const result = simPlayOut(allHands, G.bids, tw, G.trumpSuit, leader, G.numPlayers);
+        scores[card.rank + card.suit] += simScore(playerIndex, result, G.bids);
+      } else {
+        // Trick not complete — simulate remaining players in this trick, then rest
+        // For simplicity: simulate from next player onward
+        const nextPlayer = (playerIndex + 1) % G.numPlayers;
+
+        // Complete this trick with opponent plays
+        let curTrick = trickSoFar.slice();
+        let cur = nextPlayer;
+        for (let p = curTrick.length; p < G.numPlayers; p++) {
+          if (!allHands[cur] || allHands[cur].length === 0) { cur = (cur + 1) % G.numPlayers; continue; }
+          const ls = curTrick[0].card.suit;
+          let legal = allHands[cur];
+          const follow = legal.filter(c => c.suit === ls);
+          if (follow.length > 0) legal = follow;
+          else if (G.trumpSuit) {
+            const trumps = legal.filter(c => c.suit === G.trumpSuit);
+            if (trumps.length > 0) legal = trumps;
+          }
+          // Simple play
+          const needMore = tw[cur] < (G.bids[cur] || 0);
+          const pick = needMore
+            ? legal.reduce((b, c) => RANK_VALUE[c.rank] > RANK_VALUE[b.rank] ? c : b)
+            : legal.reduce((b, c) => RANK_VALUE[c.rank] < RANK_VALUE[b.rank] ? c : b);
+          allHands[cur] = allHands[cur].filter(c => !(c.rank === pick.rank && c.suit === pick.suit));
+          curTrick.push({playerIndex: cur, card: pick});
+          cur = (cur + 1) % G.numPlayers;
+        }
+
+        // Resolve this trick
+        const ls = curTrick[0].card.suit;
+        let best = curTrick[0];
+        for (let i = 1; i < curTrick.length; i++) {
+          if (cardBeats(curTrick[i].card, best.card, ls)) best = curTrick[i];
+        }
+        tw[best.playerIndex]++;
+        leader = best.playerIndex;
+
+        // Simulate remaining tricks
+        const result = simPlayOut(allHands, G.bids, tw, G.trumpSuit, leader, G.numPlayers);
+        scores[card.rank + card.suit] += simScore(playerIndex, result, G.bids);
+      }
+    }
+  }
+
+  // Pick card with best average score
+  let bestCard = legalMoves[0], bestScore = -Infinity;
+  for (const c of legalMoves) {
+    if (scores[c.rank + c.suit] > bestScore) {
+      bestScore = scores[c.rank + c.suit];
+      bestCard = c;
+    }
+  }
+  return bestCard;
+}
+
+// PIMC: choose the best bid via simulation
+function pimcBid(playerIndex, numSims) {
+  const hand = G.hands[playerIndex];
+  const cpp = G.cardsPerPlayer;
+  const scores = {};
+  for (let b = 0; b <= cpp; b++) scores[b] = 0;
+
+  for (let sim = 0; sim < numSims; sim++) {
+    const oppHands = sampleOpponentHands(hand, playerIndex);
+
+    // Build hands array
+    const allHands = [];
+    for (let i = 0; i < G.numPlayers; i++) {
+      if (i === playerIndex) allHands.push(hand.slice());
+      else allHands.push(oppHands[i] || []);
+    }
+
+    // For each possible bid, simulate the round
+    for (let bid = 0; bid <= cpp; bid++) {
+      const bids = G.bids.slice();
+      bids[playerIndex] = bid;
+      // Fill in missing opponent bids with estimate (their cards / 4 rounded)
+      for (let i = 0; i < G.numPlayers; i++) {
+        if (bids[i] === null) bids[i] = Math.round(allHands[i].length / G.numPlayers);
+      }
+
+      const tw = new Array(G.numPlayers).fill(0);
+      const leader = (G.dealerIndex + 1) % G.numPlayers;
+      const result = simPlayOut(
+        allHands.map(h => h.slice()), bids, tw, G.trumpSuit, leader, G.numPlayers
+      );
+
+      const myTricks = result[playerIndex];
+      const score = myTricks === bid ? 5 + bid : -Math.abs(myTricks - bid);
+      scores[bid] += score;
+    }
+  }
+
+  // Pick bid with best average score
+  let bestBid = 0, bestScore = -Infinity;
+  for (let b = 0; b <= cpp; b++) {
+    if (scores[b] > bestScore) { bestScore = scores[b]; bestBid = b; }
+  }
+  return bestBid;
+}
+
+// ═══════════════════════════════════════════════════════════════════
+//  AI BIDDING — strategy-specific, with PIMC for top players
 // ═══════════════════════════════════════════════════════════════════
 function computeAIBid(playerIndex) {
   const hand = G.hands[playerIndex];
@@ -1228,11 +1668,26 @@ function computeAIBid(playerIndex) {
   const comp = Math.max(0.6, 1.0 - (G.numPlayers - 2) * 0.08);
   let estimate = 0;
 
-  // 1-card rounds: all styles use win probability
+  // 1-card rounds: all styles use exact hypergeometric formula
   if (cpp === 1) {
     estimate = compute1CardWinProb(hand[0], G.numPlayers, G.trumpSuit);
     estimate += (Math.random() - 0.5) * player.noise;
     return constrainBid(Math.max(0, Math.min(1, Math.round(estimate))), estimate, cpp);
+  }
+
+  // PIMC bidding for Viktor and Sasha (multi-card rounds)
+  if ((style === 'void' || style === 'tempo') && cpp >= 2) {
+    const sims = style === 'void' ? 80 : 40;
+    let bid = pimcBid(playerIndex, sims);
+    bid = constrainBid(bid, bid, cpp);
+    return bid;
+  }
+
+  // Sniper: PIMC bidding with more sims for precision
+  if (style === 'sniper' && cpp >= 2) {
+    let bid = pimcBid(playerIndex, 80);
+    bid = constrainBid(bid, bid, cpp);
+    return bid;
   }
 
   // ── VOID style: values trumps + voids aggressively ──
@@ -1399,6 +1854,7 @@ function playCard(playerIndex, card) {
   G.hands[playerIndex].splice(idx, 1);
   G.currentTrick.push({playerIndex, card});
   G.playedCards.push(card);
+  logPlay(playerIndex, card);
   // Void tracking: if player didn't follow the led suit, they're void in it
   if (G.currentTrick.length > 1) {
     const ledSuit = G.currentTrick[0].card.suit;
@@ -1468,6 +1924,12 @@ function chooseAICard(playerIndex, legalMoves, ledSuit) {
   if (legalMoves.length === 1) return legalMoves[0];
 
   const style = getStyle(playerIndex);
+
+  // PIMC play for Viktor and Sasha
+  if (style === 'void' || style === 'tempo') {
+    const sims = style === 'void' ? 80 : 40;
+    return pimcChooseCard(playerIndex, legalMoves, sims);
+  }
   const bid = G.bids[playerIndex];
   const won = G.tricksWon[playerIndex];
   const need = won < bid;
@@ -1785,6 +2247,7 @@ function resolveTrick() {
   G.trickLeaderIndex = winner.playerIndex;
   G.phase = 'trickResult';
   G.trickWinnerIndex = winner.playerIndex;
+  logTrickEnd(winner.playerIndex);
   sfxTrickWin();
   renderAll();
 
@@ -1814,6 +2277,7 @@ function endRound() {
       if (won === bid) G.opponentStats[p].made++;
     }
   }
+  logRoundEnd();
   G.roundHistory.push({
     cardsPerPlayer: G.cardsPerPlayer,
     trumpSuit: G.trumpSuit,
@@ -1861,6 +2325,7 @@ function nextRound() {
 
 function showGameOver() {
   removeOverlays();
+  logGameEnd();
   sfxGameOver();
   const maxScore = Math.max(...G.scores);
   const winnerIdx = G.scores.indexOf(maxScore);
@@ -2233,6 +2698,7 @@ function resumeGame() {
   document.getElementById('setup-screen').style.display = 'none';
   document.getElementById('game-screen').classList.add('active');
   document.getElementById('history-btn').style.display = 'block';
+  document.getElementById('download-btn').style.display = 'block';
   renderAll();
   // If it was an AI's turn, kick them off
   if (G.phase === 'bidding' && G.currentBidderIndex !== 0) {
