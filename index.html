@@ -2375,7 +2375,7 @@ function showHistory() {
     for (let p = 0; p < G.numPlayers; p++) {
       const sc = h.roundScores[p];
       const cls = sc > 0 ? 'positive' : sc < 0 ? 'negative' : 'zero';
-      html += `<td class="${cls}">${sc > 0 ? '+' : ''}${sc} <span style="opacity:0.5;font-size:12px">(${h.bids[p]}/${h.tricksWon[p]})</span></td>`;
+      html += `<td class="${cls}">${sc > 0 ? '+' : ''}${sc} <span style="opacity:0.5;font-size:12px">(${h.tricksWon[p]}/${h.bids[p]})</span></td>`;
     }
     html += `</tr>`;
   }
@@ -2421,8 +2421,8 @@ function renderScoreboard() {
     const name = mobile ? fullName.slice(0, 3) : fullName;
     html += `${face}${name}:${G.scores[p]}`;
     if (G.bids[p] !== null) {
-      html += `<span class="bid-info"> ${G.bids[p]}`;
-      if (G.biddingComplete) html += `/${G.tricksWon[p]}`;
+      html += `<span class="bid-info"> ${G.biddingComplete ? G.tricksWon[p] : G.bids[p]}`;
+      if (G.biddingComplete) html += `/${G.bids[p]}`;
       html += `</span>`;
     }
     html += `</span>`;
@@ -2444,8 +2444,8 @@ function renderOpponents() {
     const face = getFace(G.playerNames[p]);
     let label = `<div class="player-label ${isActive ? 'active-player' : ''} ${isLeader ? 'trick-leader' : ''}">${face} ${G.playerNames[p]}`;
     if (G.bids[p] !== null) {
-      label += ` <span style="opacity:0.7">(${G.bids[p]}`;
-      if (G.biddingComplete) label += `/${G.tricksWon[p]}`;
+      label += ` <span style="opacity:0.7">(${G.biddingComplete ? G.tricksWon[p] : G.bids[p]}`;
+      if (G.biddingComplete) label += `/${G.bids[p]}`;
       label += `)</span>`;
     }
     label += `</div>`;
@@ -2523,7 +2523,7 @@ function renderHand() {
   }
   // Show bid/tricks label to the right of cards
   if (G.biddingComplete) {
-    html += `<span style="font-size:14px;font-weight:600;margin-left:12px;white-space:nowrap">(${G.bids[0]}/${G.tricksWon[0]})</span>`;
+    html += `<span style="font-size:14px;font-weight:600;margin-left:12px;white-space:nowrap">(${G.tricksWon[0]}/${G.bids[0]})</span>`;
   } else if (G.bids[0] !== null) {
     html += `<span style="font-size:14px;font-weight:600;margin-left:12px;white-space:nowrap">(${G.bids[0]})</span>`;
   }

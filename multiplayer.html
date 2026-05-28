@@ -2383,7 +2383,7 @@ function showHistory() {
     const h=G.roundHistory[r],trumpStr=h.trumpSuit?SUIT_SYMBOL[h.trumpSuit]:'NT';
     const col=h.trumpSuit&&SUIT_COLOR[h.trumpSuit]==='red'?'#d32f2f':'#fff';
     html+=`<tr><td>${r+1}</td><td>${h.cardsPerPlayer}</td><td style="color:${col}">${trumpStr}</td>`;
-    for(let p=0;p<G.numPlayers;p++){const sc=h.roundScores[p],cls=sc>0?'positive':sc<0?'negative':'zero';html+=`<td class="${cls}">${sc>0?'+':''}${sc} <span style="opacity:0.5;font-size:12px">(${h.bids[p]}/${h.tricksWon[p]})</span></td>`;}
+    for(let p=0;p<G.numPlayers;p++){const sc=h.roundScores[p],cls=sc>0?'positive':sc<0?'negative':'zero';html+=`<td class="${cls}">${sc>0?'+':''}${sc} <span style="opacity:0.5;font-size:12px">(${h.tricksWon[p]}/${h.bids[p]})</span></td>`;}
     html+=`</tr>`;
   }
   html+=`<tr style="font-weight:700;border-top:2px solid rgba(255,255,255,0.3)"><td colspan="3">Total</td>`;
@@ -2426,7 +2426,7 @@ function renderScoreboard() {
     const fullName=G.playerNames[p];
     const face=p===seat?'🐺':(MP.active&&!isAIPlayer(p)?'🙂':getFace(fullName));
     html+=`${face}${mobile?fullName.slice(0,3):fullName}:${G.scores[p]}`;
-    if(G.bids[p]!==null){html+=`<span class="bid-info"> ${G.bids[p]}`;if(G.biddingComplete)html+=`/${G.tricksWon[p]}`;html+=`</span>`;}
+    if(G.bids[p]!==null){html+=`<span class="bid-info"> ${G.biddingComplete?G.tricksWon[p]:G.bids[p]}`;if(G.biddingComplete)html+=`/${G.bids[p]}`;html+=`</span>`;}
     html+=`</span>`;
   }
   el.innerHTML=html;
@@ -2443,7 +2443,7 @@ function renderOpponents() {
     const isHuman=MP.active&&!isAIPlayer(realSeat);
     const face=isHuman?'🙂':getFace(G.playerNames[realSeat]);
     let label=`<div class="player-label ${isActive?'active-player':''} ${isLeader?'trick-leader':''}">${face} ${G.playerNames[realSeat]}`;
-    if(G.bids[realSeat]!==null){label+=` <span style="opacity:0.7">(${G.bids[realSeat]}`;if(G.biddingComplete)label+=`/${G.tricksWon[realSeat]}`;label+=`)</span>`;}
+    if(G.bids[realSeat]!==null){label+=` <span style="opacity:0.7">(${G.biddingComplete?G.tricksWon[realSeat]:G.bids[realSeat]}`;if(G.biddingComplete)label+=`/${G.bids[realSeat]}`;label+=`)</span>`;}
     label+=`</div>`;
     area.insertAdjacentHTML('beforeend',label);
     const count=MP.active?(MP.handCounts[realSeat]||0):G.hands[realSeat].length;
@@ -2495,7 +2495,7 @@ function renderHand() {
       <div class="corner bottom-right"><span class="rank">${card.rank}</span><span class="suit-sym">${sym}</span></div>
     </div>`;
   }
-  if(G.biddingComplete)html+=`<span style="font-size:14px;font-weight:600;margin-left:12px;white-space:nowrap">(${G.bids[seat]}/${G.tricksWon[seat]})</span>`;
+  if(G.biddingComplete)html+=`<span style="font-size:14px;font-weight:600;margin-left:12px;white-space:nowrap">(${G.tricksWon[seat]}/${G.bids[seat]})</span>`;
   else if(G.bids[seat]!==null)html+=`<span style="font-size:14px;font-weight:600;margin-left:12px;white-space:nowrap">(${G.bids[seat]})</span>`;
   document.getElementById('hand-area').innerHTML=html;
 }
@@ -2753,6 +2753,12 @@ function mpCompleteJoin() {
       if(!session){document.getElementById('join-status').textContent='Session not found.';document.getElementById('join-btn').disabled=false;return;}
       const numPlayers=session.numPlayers;
       const myEntry=session.players&&session.players[MP.uid];
+      // Block strangers from joining a game already in progress
+      if(!myEntry&&(session.phase==='playing'||session.phase==='ended')){
+        document.getElementById('join-status').textContent='Game already in progress.';
+        document.getElementById('join-btn').disabled=false;
+        return;
+      }
       let seat;
       if(myEntry){
         seat=myEntry.seat; // reconnect: reuse existing seat
@@ -3021,6 +3027,10 @@ window.addEventListener('DOMContentLoaded',()=>{
             document.getElementById('join-name-input').value=myEntry.name;
             mpCompleteJoin();
           }
+        } else if(session.phase==='playing'||session.phase==='ended') {
+          // Stranger hitting the link after game started
+          document.getElementById('mp-setup-screen').classList.add('active');
+          document.getElementById('mp-setup-screen').insertAdjacentHTML('beforeend','<p style="color:#f99;margin-top:16px">Game already in progress.</p>');
         } else {
           mpShowJoin(code);
         }
