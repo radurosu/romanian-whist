@@ -98,7 +98,7 @@ body {
   flex: 1;
   display: grid;
   grid-template-columns: 160px 1fr 160px;
-  grid-template-rows: 110px 1fr 160px;
+  grid-template-rows: 110px 1fr 190px;
   min-height: 0;
 }
 
@@ -200,10 +200,13 @@ body {
   grid-column: 1 / -1;
   grid-row: 3;
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   justify-content: center;
-  padding: 5px 20px;
+  padding: 12px 20px 0;
   gap: 0;
+  position: relative;
+  z-index: 2;
+  transform: translateY(-78px);
 }
 #hand-area .card {
   transition: transform 0.2s ease, box-shadow 0.2s ease, opacity 0.2s ease;
@@ -544,7 +547,7 @@ body {
   .card.mini .bottom-right { bottom: 1px; right: 2px; }
 
   /* Hand area */
-  #hand-area { padding: 2px 4px; }
+  #hand-area { align-items: center; padding: 2px 4px; transform: none; }
   #hand-area .card { margin: 0 -4px; transition: none; }
   #hand-area .card:hover { transform: none !important; box-shadow: none !important; }
   #hand-area .card.playable { opacity: 1; }
@@ -741,6 +744,35 @@ const PERSONALITIES = {
   'Clive':    { bidBias:  0.4, noise: 0.25, style: 'gambler',      face: '🦁' },
   'Rupert':   { bidBias:  0.0, noise: 0.20, style: 'spoiler',      face: '🐍' },
   'Beatrice': { bidBias: -0.1, noise: 0.18, style: 'opportunist',  face: '🦊' }
+};
+
+// Tuned by simulate_ai_tuning.mjs. These values trade a little optimism for
+// better exact-bid rates, especially in trump rounds with 5-6 players.
+const AI_WEIGHTS = {
+  trump: { A: 0.95, K: 0.80, Q: 0.54, J: 0.36, mid: 0.18, low: 0.04, long: 0.06 },
+  nonTrump: {
+    aceWithTrump: 0.57,
+    aceNoTrump: 0.89,
+    kingBase: 0.28,
+    kingWithAce: 0.10,
+    kingShort: 0.03,
+    queenBase: 0.10,
+    queenProtected: 0.06,
+    queenLoose: -0.06,
+    jack: 0.03
+  },
+  shape: { voidBonus: 0.20, singletonBonus: 0.07 },
+  noTrumpMultiplier: 1.22,
+  reliabilityFloor: 0.54,
+  reliabilitySlope: 0.09,
+  competitionSlope: 0.06,
+  play: {
+    sureWinnerTrumpRisk: 0.70,
+    highPlayerDuckThreshold: 5,
+    speculativeAceOnlyPlayers: 5,
+    analystBlock: true,
+    opportunistMode: true
+  }
 };
 
 function getFace(name) {
@@ -956,6 +988,22 @@ function isHighestRemaining(card, hand) {
   return !out.some(c => c.suit === card.suit && RANK_VALUE[c.rank] > RANK_VALUE[card.rank]);
 }
 
+function suitVoidRisk(suit, hand) {
+  const out = getCardsStillOut(hand, G.trumpSuit);
+  const cardsStillOutInSuit = out.filter(c => c.suit === suit).length;
+  const unknownCards = out.length || 1;
+  const playersLeft = Math.max(0, G.numPlayers - 1 - G.currentTrick.length);
+  const missingShare = 1 - cardsStillOutInSuit / unknownCards;
+  return 1 - Math.pow(1 - missingShare, playersLeft);
+}
+
+function isLikelyWinner(card, hand) {
+  if (!isHighestRemaining(card, hand)) return false;
+  if (!G.trumpSuit || card.suit === G.trumpSuit) return true;
+  if (G.currentTrick.length === G.numPlayers - 1) return true;
+  return suitVoidRisk(card.suit, hand) < AI_WEIGHTS.play.sureWinnerTrumpRisk;
+}
+
 // ─── 1-Card Round Win Probability ───
 // In a 1-card round every player plays exactly one card; the result is a pure
 // rank/trump comparison with no hand management. We compute win probability
@@ -1022,8 +1070,10 @@ function computeAIBid(playerIndex) {
   // Sort each suit by rank descending
   for (const s of SUITS) suitCards[s].sort((a, b) => RANK_VALUE[b.rank] - RANK_VALUE[a.rank]);
 
-  const ranksPerSuit = G.numPlayers * 2; // total cards per suit in the deck
-  const reliability = Math.max(0.5, 1.0 - (G.numPlayers - 3) * 0.12);
+  const reliability = Math.max(
+    AI_WEIGHTS.reliabilityFloor,
+    1.0 - (G.numPlayers - 3) * AI_WEIGHTS.reliabilitySlope
+  );
 
   for (const suit of SUITS) {
     const cards = suitCards[suit];
@@ -1033,18 +1083,16 @@ function computeAIBid(playerIndex) {
     for (let i = 0; i < cards.length; i++) {
       const card = cards[i];
       const val = RANK_VALUE[card.rank];
-      const positionInSuit = i; // 0 = highest card we hold in this suit
-
       if (isTrump) {
         // Trump cards win against non-trump, but compete with other trumps
-        if (val === 14) estimate += 0.92;        // Ace of trump: near certain
-        else if (val === 13) estimate += 0.75;
-        else if (val === 12) estimate += 0.45;
-        else if (val === 11) estimate += 0.3;
-        else if (val >= 9) estimate += 0.15;
-        else estimate += 0.05;                   // Low trump: unlikely winner
+        if (val === 14) estimate += AI_WEIGHTS.trump.A;
+        else if (val === 13) estimate += AI_WEIGHTS.trump.K;
+        else if (val === 12) estimate += AI_WEIGHTS.trump.Q;
+        else if (val === 11) estimate += AI_WEIGHTS.trump.J;
+        else if (val >= 9) estimate += AI_WEIGHTS.trump.mid;
+        else estimate += AI_WEIGHTS.trump.low;
         // Long trump bonus (minor)
-        if (cards.length > 2 && i >= 2) estimate += 0.05;
+        if (cards.length > 2 && i >= 2) estimate += AI_WEIGHTS.trump.long;
       } else {
         // Non-trump cards: can be trumped, so less reliable
         const hasAce = cards.some(c => c.rank === 'A');
@@ -1052,15 +1100,15 @@ function computeAIBid(playerIndex) {
 
         if (val === 14) {
           // Ace: strong but can be trumped if opponent is void
-          estimate += G.trumpSuit ? 0.7 * reliability : 0.85 * reliability;
+          estimate += (G.trumpSuit ? AI_WEIGHTS.nonTrump.aceWithTrump : AI_WEIGHTS.nonTrump.aceNoTrump) * reliability;
         } else if (val === 13) {
-          const boost = hasAce ? 0.12 : (cards.length <= 2 ? 0.05 : 0);
-          estimate += (0.35 + boost) * reliability;
+          const boost = hasAce ? AI_WEIGHTS.nonTrump.kingWithAce : (cards.length <= 2 ? AI_WEIGHTS.nonTrump.kingShort : 0);
+          estimate += (AI_WEIGHTS.nonTrump.kingBase + boost) * reliability;
         } else if (val === 12) {
-          const boost = (hasAce || hasKing) ? 0.08 : -0.05;
-          estimate += Math.max(0, (0.15 + boost)) * reliability;
+          const boost = (hasAce || hasKing) ? AI_WEIGHTS.nonTrump.queenProtected : AI_WEIGHTS.nonTrump.queenLoose;
+          estimate += Math.max(0, AI_WEIGHTS.nonTrump.queenBase + boost) * reliability;
         } else if (val === 11) {
-          estimate += 0.05 * reliability; // Jack: rarely wins
+          estimate += AI_WEIGHTS.nonTrump.jack * reliability; // Jack: rarely wins
         }
         // Cards below Jack: ~0 trick value, not counted
       }
@@ -1074,17 +1122,17 @@ function computeAIBid(playerIndex) {
       if (s === G.trumpSuit) continue;
       if (suitCounts[s] === 0) {
         // Void: can trump in, but only if we actually get a chance
-        estimate += 0.25 * Math.min(trumpCount, 2);
+        estimate += AI_WEIGHTS.shape.voidBonus * Math.min(trumpCount, 2);
       } else if (suitCounts[s] === 1 && cpp >= 3) {
         // Singleton: will be void after 1 trick
-        estimate += 0.1 * Math.min(trumpCount, 1);
+        estimate += AI_WEIGHTS.shape.singletonBonus * Math.min(trumpCount, 1);
       }
     }
   }
 
   // No trump rounds: high cards more valuable (no risk of being trumped)
   if (!G.trumpSuit) {
-    estimate *= 1.15;
+    estimate *= AI_WEIGHTS.noTrumpMultiplier;
   }
 
   // Apply personality bias
@@ -1101,6 +1149,13 @@ function computeAIBid(playerIndex) {
     }
   }
 
+  if (personality.style === 'opportunist') {
+    const tableBid = G.bids.reduce((a, b) => a + (b ?? 0), 0);
+    const expectedTable = cpp * 0.92;
+    if (tableBid > expectedTable) estimate -= 0.20;
+    else if (tableBid < expectedTable * 0.65) estimate += 0.15;
+  }
+
   // Position-aware bidding: later positions can be more precise
   const bidPosition = G.bids.filter(b => b !== null).length;
   const positionNoise = bidPosition === 0 ? 0.35 : bidPosition <= 1 ? 0.25 : 0.15;
@@ -1110,7 +1165,7 @@ function computeAIBid(playerIndex) {
 
   // Scale estimate down by competition: with N players, each trick is contested
   // by N players. Raw estimate assumes we win in isolation — discount it.
-  const competitionFactor = 1.0 - (G.numPlayers - 2) * 0.08; // 4p: 0.84, 5p: 0.76, 6p: 0.68
+  const competitionFactor = 1.0 - (G.numPlayers - 2) * AI_WEIGHTS.competitionSlope;
   estimate *= competitionFactor;
 
   let bid = Math.round(estimate);
@@ -1239,8 +1294,9 @@ function chooseAICard(playerIndex, legalMoves, ledSuit) {
   const shouldBlock = personality.style === 'spoiler'
     // Spoiler always blocks
     ? G.bids.some((b, i) => i !== playerIndex && b !== null && G.tricksWon[i] >= b - 1 && b > 0)
-    // Others only block when they've made their own bid
-    : hasExact && G.bids.some((b, i) => i !== playerIndex && b !== null && G.tricksWon[i] === b - 1 && b > 0);
+    // Analysts may block earlier; others block after making their own bid.
+    : (hasExact || (AI_WEIGHTS.play.analystBlock && personality.style === 'analyst'))
+      && G.bids.some((b, i) => i !== playerIndex && b !== null && G.tricksWon[i] === b - 1 && b > 0);
 
   // ── LEADING ──
   if (G.currentTrick.length === 0) {
@@ -1248,14 +1304,14 @@ function chooseAICard(playerIndex, legalMoves, ledSuit) {
       const trumpCards = G.trumpSuit ? legalMoves.filter(c => c.suit === G.trumpSuit) : [];
       const nonTrump = legalMoves.filter(c => c.suit !== G.trumpSuit);
 
-      // Sure winners: cards that are highest remaining in their suit
-      const sureWinners = legalMoves.filter(c => isHighestRemaining(c, hand));
+      // Likely winners account for both rank and trump-risk from void players.
+      const likelyWinners = legalMoves.filter(c => isLikelyWinner(c, hand));
 
       // Conservative (Nigel): only lead sure winners, never speculate
       if (personality.style === 'conservative') {
-        if (sureWinners.length > 0) {
-          const ntWinners = sureWinners.filter(c => c.suit !== G.trumpSuit);
-          return ntWinners.length > 0 ? ntWinners[0] : sureWinners[0];
+        if (likelyWinners.length > 0) {
+          const ntWinners = likelyWinners.filter(c => c.suit !== G.trumpSuit);
+          return ntWinners.length > 0 ? ntWinners[0] : likelyWinners[0];
         }
         // No sure winners — lead lowest to fish for tricks later
         return pickLowest(nonTrump.length > 0 ? nonTrump : legalMoves);
@@ -1273,9 +1329,16 @@ function chooseAICard(playerIndex, legalMoves, ledSuit) {
         return pickHighest(legalMoves);
       }
 
+      if (personality.style === 'opportunist' && AI_WEIGHTS.play.opportunistMode) {
+        if (likelyWinners.length > 0 && stillNeeded <= likelyWinners.length) {
+          return pickLowest(likelyWinners);
+        }
+        if (trumpCards.length >= 2 && stillNeeded >= 2) return pickHighest(trumpCards);
+      }
+
       // Analyst (Margaret) / default: methodical lead
-      if (sureWinners.length > 0) {
-        const bySuitLen = sureWinners.sort((a, b) => {
+      if (likelyWinners.length > 0) {
+        const bySuitLen = likelyWinners.sort((a, b) => {
           const aLen = hand.filter(h => h.suit === a.suit).length;
           const bLen = hand.filter(h => h.suit === b.suit).length;
           return aLen - bLen;
@@ -1304,7 +1367,7 @@ function chooseAICard(playerIndex, legalMoves, ledSuit) {
       // are no sure winners. Burning a Queen or King into 4-5 opponents is
       // rarely productive — lead low instead and preserve the high card.
       if (nonTrump.length > 0) {
-        if (G.numPlayers >= 5) {
+        if (G.numPlayers >= AI_WEIGHTS.play.speculativeAceOnlyPlayers) {
           const aces = nonTrump.filter(c => c.rank === 'A');
           if (aces.length > 0) return aces[0];
           return pickLowest(nonTrump);
@@ -1350,13 +1413,20 @@ function chooseAICard(playerIndex, legalMoves, ledSuit) {
   const isLast = G.currentTrick.length === G.numPlayers - 1;
   const playersLeft = G.numPlayers - 1 - G.currentTrick.length;
 
+  if (shouldBlock && winEntry.playerIndex !== playerIndex) {
+    const winnerBid = G.bids[winEntry.playerIndex];
+    if (winnerBid > 0 && G.tricksWon[winEntry.playerIndex] === winnerBid - 1 && beaters.length > 0) {
+      return pickLowest(beaters);
+    }
+  }
+
   if (needMore) {
     if (beaters.length > 0) {
       if (isLast) return pickLowest(beaters); // Perfect info
 
       // Conservative: only beat if sure winner
       if (personality.style === 'conservative') {
-        const sureBeaters = beaters.filter(c => isHighestRemaining(c, hand));
+        const sureBeaters = beaters.filter(c => isLikelyWinner(c, hand));
         if (sureBeaters.length > 0) return pickLowest(sureBeaters);
         // Not sure — play lowest and hope
         return pickLowest(beaters);
@@ -1367,19 +1437,25 @@ function chooseAICard(playerIndex, legalMoves, ledSuit) {
         return pickHighest(beaters);
       }
 
+      if (personality.style === 'opportunist' && AI_WEIGHTS.play.opportunistMode) {
+        const likelyBeaters = beaters.filter(c => isLikelyWinner(c, hand));
+        if (likelyBeaters.length > 0) return pickLowest(likelyBeaters);
+        if (playersLeft >= 2) return pickLowest(losers.length > 0 ? losers : legalMoves);
+      }
+
       // Analyst/default: calculate based on remaining players
       if (playersLeft <= 1) {
         const cheapest = pickLowest(beaters);
-        if (isHighestRemaining(cheapest, hand)) return cheapest;
+        if (isLikelyWinner(cheapest, hand)) return cheapest;
         const sorted = beaters.sort((a, b) => RANK_VALUE[a.rank] - RANK_VALUE[b.rank]);
         return sorted[Math.min(1, sorted.length - 1)];
       }
-      const sureBeaters = beaters.filter(c => isHighestRemaining(c, hand));
+      const sureBeaters = beaters.filter(c => isLikelyWinner(c, hand));
       if (sureBeaters.length > 0) return pickLowest(sureBeaters);
       // In 5-6p games with 2+ players still to act, committing a non-certain
       // beater is likely wasteful — it'll probably get over-taken. Duck instead
       // and save the card for a better spot.
-      if (G.numPlayers >= 5 && playersLeft >= 2) {
+      if (G.numPlayers >= AI_WEIGHTS.play.highPlayerDuckThreshold && playersLeft >= 2) {
         const ntLosers = legalMoves.filter(c => c.suit !== G.trumpSuit);
         return pickLowest(ntLosers.length > 0 ? ntLosers : legalMoves);
       }
@@ -1426,15 +1502,15 @@ function getSuggestion() {
   // LEADING
   if (G.currentTrick.length === 0) {
     if (needMore) {
-      const sureWinners = legal.filter(c => isHighestRemaining(c, hand));
+      const sureWinners = legal.filter(c => isLikelyWinner(c, hand));
       const nonTrump = legal.filter(c => c.suit !== G.trumpSuit);
       const ntWinners = sureWinners.filter(c => c.suit !== G.trumpSuit);
 
       if (ntWinners.length > 0) {
-        return { card: ntWinners[0], reason: `This is the highest remaining ${ntWinners[0].suit} — guaranteed winner. Lead it now to secure a trick.` };
+        return { card: ntWinners[0], reason: `This is the highest remaining ${ntWinners[0].suit} and the trump risk looks low. Lead it now to secure a trick.` };
       }
       if (sureWinners.length > 0) {
-        return { card: sureWinners[0], reason: `Highest remaining in its suit — a sure trick. No higher card is out there.` };
+        return { card: sureWinners[0], reason: `This card is very likely to hold: no higher card is out and the table position is favorable.` };
       }
 
       // AK combo
@@ -1473,9 +1549,9 @@ function getSuggestion() {
         const cheap = pickLowest(beaters);
         return { card: cheap, reason: `You're last to play. ${cheap.rank} of ${cheap.suit} is the cheapest card that beats ${winnerName}'s ${winCard.rank}.` };
       }
-      const sure = beaters.filter(c => isHighestRemaining(c, hand));
+      const sure = beaters.filter(c => isLikelyWinner(c, hand));
       if (sure.length > 0) {
-        return { card: pickLowest(sure), reason: `This is the highest remaining in its suit — it can't be beaten. Play it to secure the trick.` };
+        return { card: pickLowest(sure), reason: `This is the cheapest likely winner here. Play it to secure the trick without wasting a bigger card.` };
       }
       return { card: pickHighest(beaters), reason: `You need tricks and ${beaters.length} card${beaters.length > 1 ? 's' : ''} can beat ${winnerName}. Play high to hold the lead.` };
     }

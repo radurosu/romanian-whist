@@ -1,5 +1,5 @@
 const CACHE = 'wist-v3';
-const ASSETS = ['./', './index.html', './manifest.json'];
+const ASSETS = ['./', './index.html', './multiplayer.html', './manifest.json'];
 
 self.addEventListener('install', event => {
   event.waitUntil(
