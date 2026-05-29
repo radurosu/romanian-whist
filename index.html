@@ -395,6 +395,15 @@ body {
 .overlay-content .positive { color: #4caf50; }
 .overlay-content .negative { color: #e74c3c; }
 .overlay-content .zero { color: #999; }
+.trick-log { margin-top: 14px; text-align: left; font-size: 13px; width: 100%; }
+.trick-log summary { cursor: pointer; font-size: 14px; opacity: 0.7; margin-bottom: 6px; user-select: none; }
+.trick-log-row { display: flex; align-items: center; gap: 6px; padding: 3px 0; border-bottom: 1px solid rgba(255,255,255,0.07); flex-wrap: wrap; }
+.trick-log-row:last-child { border-bottom: none; }
+.trick-log-num { opacity: 0.4; min-width: 18px; }
+.trick-log-card { white-space: nowrap; }
+.trick-log-card.tl-winner { font-weight: 700; }
+.trick-log-card.tl-lead { text-decoration: underline; opacity: 0.9; }
+.trick-log-reason { opacity: 0.45; font-size: 11px; margin-left: auto; }
 
 /* Suggestion tooltip */
 #suggest-btn {
@@ -750,7 +759,7 @@ const OPPONENT_AREAS = {
 const PLAYERS = {
   'Viktor': { style: 'void',      face: '🐉', noise: 0.12 },
   'Sasha':  { style: 'tempo',     face: '⚡', noise: 0.15 },
-  'Sniper': { style: 'sniper',    face: '🎯', noise: 0.08 },
+  'Sniper': { style: 'sniper',    face: '🎯', noise: 0.12 },
   'Katya':  { style: 'precision', face: '🦊', noise: 0.10 },
   'Tempo2': { style: 'tempo',     face: '🔥', noise: 0.18 },
 };
@@ -798,7 +807,8 @@ function initState(numPlayers) {
     fullDeck: [],          // all cards in the deck this round
     knownVoids: {},        // {playerIndex: {suit: true}} — opponents shown void
     opponentStats: {},     // {playerIndex: {bids, made}} — cross-round tracking
-    gameLog: null          // full game recording
+    gameLog: null,         // full game recording
+    trickHistory: []       // trick-by-trick log for round summary
   };
 }
 
@@ -980,6 +990,8 @@ function startRound() {
   const deck = buildDeck(G.numPlayers);
   G.fullDeck = deck.slice();
   G.playedCards = [];
+  G.trickHistory = [];
+  G.lastTrick = null;
   // Reset void tracking each round
   G.knownVoids = {};
   for (let i = 0; i < G.numPlayers; i++) G.knownVoids[i] = {};
@@ -1411,11 +1423,26 @@ function simPlayOut(hands, bids, tricksWon, trumpSuit, leader, numPlayers) {
         }
       }
 
-      // Simple play: need more tricks → highest, done → lowest
+      // Smarter play: position-aware card selection
       const need = tw[cur] < (bids[cur] || 0);
       let card;
       if (need) {
-        card = legal.reduce((b, c) => RANK_VALUE[c.rank] > RANK_VALUE[b.rank] ? c : b);
+        if (trick.length > 0) {
+          // Following: check if we can actually win
+          const ls = trick[0].card.suit;
+          const curBest = trick.reduce((b, t) => cardBeats(t.card, b.card, ls) ? t : b);
+          const winners = legal.filter(c => cardBeats(c, curBest.card, ls));
+          if (winners.length > 0) {
+            // Win with lowest winning card (efficient)
+            card = winners.reduce((b, c) => RANK_VALUE[c.rank] < RANK_VALUE[b.rank] ? c : b);
+          } else {
+            // Can't win — play lowest to conserve strong cards
+            card = legal.reduce((b, c) => RANK_VALUE[c.rank] < RANK_VALUE[b.rank] ? c : b);
+          }
+        } else {
+          // Leading: play highest
+          card = legal.reduce((b, c) => RANK_VALUE[c.rank] > RANK_VALUE[b.rank] ? c : b);
+        }
       } else {
         card = legal.reduce((b, c) => RANK_VALUE[c.rank] < RANK_VALUE[b.rank] ? c : b);
       }
@@ -1690,19 +1717,12 @@ function computeAIBid(playerIndex) {
     return est;
   }
 
-  // PIMC bidding for Viktor and Sasha (multi-card rounds)
-  if ((style === 'void' || style === 'tempo') && cpp >= 2) {
-    const sims = style === 'void' ? 80 : 40;
-    let bid = pimcBid(playerIndex, sims);
-    bid = bidAwarenessAdj(bid);
-    bid = Math.max(0, Math.min(cpp, Math.round(bid)));
-    bid = constrainBid(bid, bid, cpp);
-    return bid;
-  }
-
-  // Sniper: PIMC bidding with more sims for precision
-  if (style === 'sniper' && cpp >= 2) {
-    let bid = pimcBid(playerIndex, 80);
+  // PIMC bidding for Viktor, Sasha, and Sniper (multi-card rounds)
+  // Bias corrects for sim playout underestimating real trick-taking
+  if ((style === 'void' || style === 'tempo' || style === 'sniper') && cpp >= 2) {
+    const sims = style === 'tempo' ? 50 : 80;
+    const bias = {void: 0.2, tempo: 0.15, sniper: 0.3}[style] || 0;
+    let bid = pimcBid(playerIndex, sims) + bias * Math.min(1, cpp / 4);
     bid = bidAwarenessAdj(bid);
     bid = Math.max(0, Math.min(cpp, Math.round(bid)));
     bid = constrainBid(bid, bid, cpp);
@@ -2251,8 +2271,17 @@ function pickLowest(cards) {
   return cards.reduce((best, c) => RANK_VALUE[c.rank] < RANK_VALUE[best.rank] ? c : best);
 }
 
+function trickWinReason(entries, winnerIdx, trumpSuit) {
+  const ledSuit = entries[0].card.suit;
+  const winCard = entries.find(e => e.playerIndex === winnerIdx).card;
+  if (trumpSuit && winCard.suit === trumpSuit && ledSuit !== trumpSuit) return `trump ${SUIT_SYMBOL[trumpSuit]}`;
+  return `high ${SUIT_SYMBOL[ledSuit]}`;
+}
+
 function resolveTrick() {
   const winner = currentWinner();
+  G.lastTrick = {entries: [...G.currentTrick], winnerIndex: winner.playerIndex, reason: trickWinReason(G.currentTrick, winner.playerIndex, G.trumpSuit)};
+  G.trickHistory.push(G.lastTrick);
   G.tricksWon[winner.playerIndex]++;
   G.trickLeaderIndex = winner.playerIndex;
   G.phase = 'trickResult';
@@ -2294,7 +2323,8 @@ function endRound() {
     bids: [...G.bids],
     tricksWon: [...G.tricksWon],
     roundScores,
-    cumulativeScores: [...G.scores]
+    cumulativeScores: [...G.scores],
+    trickHistory: G.trickHistory.map(t => ({...t, entries: [...t.entries]}))
   });
   G.phase = 'roundResult';
   showRoundResult(roundScores);
@@ -2317,6 +2347,23 @@ function showRoundResult(roundScores) {
     </tr>`;
   }
   html += `</table>`;
+  if (G.trickHistory && G.trickHistory.length) {
+    const trumpStr = G.trumpSuit ? `${SUIT_SYMBOL[G.trumpSuit]} trump` : 'no trump';
+    html += `<details class="trick-log"><summary>Tricks (${trumpStr})</summary>`;
+    G.trickHistory.forEach((t, i) => {
+      html += `<div class="trick-log-row"><span class="trick-log-num">${i+1}.</span>`;
+      t.entries.forEach((e, j) => {
+        const sym = SUIT_SYMBOL[e.card.suit];
+        const col = SUIT_COLOR[e.card.suit] === 'red' ? '#e44' : '#fff';
+        const isW = e.playerIndex === t.winnerIndex, isL = j === 0;
+        const name = G.playerNames[e.playerIndex];
+        html += `<span class="trick-log-card${isW ? ' tl-winner' : ''}${isL ? ' tl-lead' : ''}" title="${name}" style="color:${col}">${e.card.rank}${sym}${isL ? '↑' : ''}${isW ? '✓' : ''}</span>`;
+        if (j < t.entries.length - 1) html += `<span style="opacity:0.3">·</span>`;
+      });
+      html += `<span class="trick-log-reason">${G.playerNames[t.winnerIndex]} (${t.reason})</span></div>`;
+    });
+    html += `</details>`;
+  }
   if (G.currentRoundIndex + 1 >= G.roundSequence.length) {
     html += `<button class="btn" onclick="showGameOver()">Final Results</button>`;
   } else {

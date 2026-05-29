@@ -984,7 +984,7 @@ const OPPONENT_AREAS = {
 const PLAYERS = {
   'Viktor': { style: 'void',      face: '🐉', noise: 0.12 },
   'Sasha':  { style: 'tempo',     face: '⚡', noise: 0.15 },
-  'Sniper': { style: 'sniper',    face: '🎯', noise: 0.08 },
+  'Sniper': { style: 'sniper',    face: '🎯', noise: 0.12 },
   'Katya':  { style: 'precision', face: '🦊', noise: 0.10 },
   'Tempo2': { style: 'tempo',     face: '🔥', noise: 0.18 },
 };
@@ -1510,10 +1510,22 @@ function simPlayOut(hands, bids, tricksWon, trumpSuit, leader, numPlayers) {
         }
       }
 
+      // Smarter play: position-aware card selection
       const need = tw[cur] < (bids[cur] || 0);
       let card;
       if (need) {
-        card = legal.reduce((b, c) => RANK_VALUE[c.rank] > RANK_VALUE[b.rank] ? c : b);
+        if (trick.length > 0) {
+          const ls = trick[0].card.suit;
+          const curBest = trick.reduce((b, t) => cardBeats(t.card, b.card, ls) ? t : b);
+          const winners = legal.filter(c => cardBeats(c, curBest.card, ls));
+          if (winners.length > 0) {
+            card = winners.reduce((b, c) => RANK_VALUE[c.rank] < RANK_VALUE[b.rank] ? c : b);
+          } else {
+            card = legal.reduce((b, c) => RANK_VALUE[c.rank] < RANK_VALUE[b.rank] ? c : b);
+          }
+        } else {
+          card = legal.reduce((b, c) => RANK_VALUE[c.rank] > RANK_VALUE[b.rank] ? c : b);
+        }
       } else {
         card = legal.reduce((b, c) => RANK_VALUE[c.rank] < RANK_VALUE[b.rank] ? c : b);
       }
@@ -1755,17 +1767,12 @@ function computeAIBid(playerIndex) {
     return est;
   }
 
-  if ((style === 'void' || style === 'tempo') && cpp >= 2) {
-    const sims = style === 'void' ? 80 : 40;
-    let bid = pimcBid(playerIndex, sims);
-    bid = bidAwarenessAdj(bid);
-    bid = Math.max(0, Math.min(cpp, Math.round(bid)));
-    bid = constrainBid(bid, bid, cpp);
-    return bid;
-  }
-
-  if (style === 'sniper' && cpp >= 2) {
-    let bid = pimcBid(playerIndex, 80);
+  // PIMC bidding for Viktor, Sasha, and Sniper (multi-card rounds)
+  // Bias corrects for sim playout underestimating real trick-taking
+  if ((style === 'void' || style === 'tempo' || style === 'sniper') && cpp >= 2) {
+    const sims = style === 'tempo' ? 50 : 80;
+    const bias = {void: 0.2, tempo: 0.15, sniper: 0.3}[style] || 0;
+    let bid = pimcBid(playerIndex, sims) + bias * Math.min(1, cpp / 4);
     bid = bidAwarenessAdj(bid);
     bid = Math.max(0, Math.min(cpp, Math.round(bid)));
     bid = constrainBid(bid, bid, cpp);
