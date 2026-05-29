@@ -1070,9 +1070,43 @@ function logGameEnd() {
   for(let i=0;i<G.numPlayers;i++) G.gameLog.finalScores[i]={name:G.playerNames[i],score:G.scores[i]};
   const winner=G.scores.indexOf(Math.max(...G.scores));
   G.gameLog.winner=G.playerNames[winner];G.gameLog.winnerScore=G.scores[winner];
+  G.gameLog.sessionId=MP.sessionId||'local';
+  G.gameLog.mode=MP.active?'multiplayer':'solo';
+  // Save to localStorage
   try{const logs=JSON.parse(localStorage.getItem('wist-game-logs')||'[]');logs.push(G.gameLog);while(logs.length>50)logs.shift();localStorage.setItem('wist-game-logs',JSON.stringify(logs));}catch(e){}
+  // Save to Firebase
+  if(MP.db){
+    const key=G.gameLog.timestamp.replace(/[:.]/g,'-');
+    try{MP.db.ref(`gameLogs/${key}`).set(G.gameLog);}catch(e){console.warn('Failed to save log to Firebase',e);}
+  }
 }
 function downloadGameLogs() {
+  // Init Firebase if not already, then fetch logs
+  if(!MP.db){
+    mpInit().then(()=>downloadGameLogs()).catch(()=>downloadLocalLogs());
+    return;
+  }
+  if(MP.db){
+    const btn=document.getElementById('download-btn');
+    if(btn)btn.textContent='Loading...';
+    MP.db.ref('gameLogs').orderByChild('timestamp').once('value').then(snap=>{
+      const logs=[];
+      snap.forEach(c=>{const v=c.val();if(v&&v.timestamp)logs.push(v);});
+      if(btn)btn.textContent='Download Logs';
+      if(!logs.length){alert('No games recorded yet.');return;}
+      const blob=new Blob([JSON.stringify(logs,null,2)],{type:'application/json'});
+      const url=URL.createObjectURL(blob);
+      const a=document.createElement('a');a.href=url;a.download=`whist-games-${new Date().toISOString().slice(0,10)}.json`;a.click();
+      URL.revokeObjectURL(url);
+    }).catch(()=>{
+      if(btn)btn.textContent='Download Logs';
+      downloadLocalLogs();
+    });
+  } else {
+    downloadLocalLogs();
+  }
+}
+function downloadLocalLogs() {
   try{
     const logs=JSON.parse(localStorage.getItem('wist-game-logs')||'[]');
     if(!logs.length){alert('No games recorded yet.');return;}
