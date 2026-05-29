@@ -1678,10 +1678,24 @@ function computeAIBid(playerIndex) {
     return constrainBid(Math.max(0, Math.min(1, Math.round(estimate))), estimate, cpp);
   }
 
+  // Bid-awareness: adjust based on what others have already bid
+  function bidAwarenessAdj(est) {
+    const otherBids = G.bids.filter(b => b !== null);
+    if (otherBids.length === 0) return est;
+    const bidSum = otherBids.reduce((a,b)=>a+b,0);
+    const fair = cpp / G.numPlayers;
+    const avgOther = bidSum / otherBids.length;
+    if (avgOther > fair * 1.2) est -= 0.3 + (avgOther - fair * 1.2) * 0.2;
+    else if (avgOther < fair * 0.8) est += 0.2 + (fair * 0.8 - avgOther) * 0.15;
+    return est;
+  }
+
   // PIMC bidding for Viktor and Sasha (multi-card rounds)
   if ((style === 'void' || style === 'tempo') && cpp >= 2) {
     const sims = style === 'void' ? 80 : 40;
     let bid = pimcBid(playerIndex, sims);
+    bid = bidAwarenessAdj(bid);
+    bid = Math.max(0, Math.min(cpp, Math.round(bid)));
     bid = constrainBid(bid, bid, cpp);
     return bid;
   }
@@ -1689,6 +1703,8 @@ function computeAIBid(playerIndex) {
   // Sniper: PIMC bidding with more sims for precision
   if (style === 'sniper' && cpp >= 2) {
     let bid = pimcBid(playerIndex, 80);
+    bid = bidAwarenessAdj(bid);
+    bid = Math.max(0, Math.min(cpp, Math.round(bid)));
     bid = constrainBid(bid, bid, cpp);
     return bid;
   }
@@ -1715,16 +1731,6 @@ function computeAIBid(playerIndex) {
       for (const c of suitCards(hand, s)) {
         if (c.rank === 'A') estimate += 0.5;
         else if (c.rank === 'K') estimate += 0.2;
-      }
-    }
-    // Opportunist: adjust based on others' bids
-    if (style === 'opportunist') {
-      const otherBids = G.bids.filter(b => b !== null);
-      if (otherBids.length > 0) {
-        const avg = otherBids.reduce((a,b)=>a+b,0) / otherBids.length;
-        const fair = cpp / G.numPlayers;
-        if (avg > fair * 1.2) estimate -= 0.3;
-        else if (avg < fair * 0.8) estimate += 0.2;
       }
     }
   }
@@ -1819,6 +1825,7 @@ function computeAIBid(playerIndex) {
 
   if (!G.trumpSuit) estimate *= 1.1;
   estimate *= comp;
+  estimate = bidAwarenessAdj(estimate);
   estimate += (Math.random() - 0.5) * player.noise * (cpp <= 2 ? 2.0 : 1.0);
 
   let bid = Math.max(0, Math.min(cpp, Math.round(estimate)));

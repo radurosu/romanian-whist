@@ -135,6 +135,51 @@ const VARIANTS = {
     competitionSlope: 0.06,
     play: { analystBlock: true, opportunistMode: true, sureWinnerTrumpRisk: 0.70 },
   }),
+  // ─── Round 2 tuning: explore around tunedB ───
+  tunedC: mergeWeights(BASE_WEIGHTS, {
+    trump: { A: 0.94, K: 0.78, Q: 0.50, J: 0.33, mid: 0.16, low: 0.03, long: 0.05 },
+    nonTrump: {
+      aceWithTrump: 0.54, aceNoTrump: 0.87, kingBase: 0.26, kingWithAce: 0.09,
+      kingShort: 0.02, queenBase: 0.09, queenProtected: 0.05, queenLoose: -0.07, jack: 0.02,
+    },
+    shape: { voidBonus: 0.22, singletonBonus: 0.08 },
+    noTrumpMultiplier: 1.20, reliabilityFloor: 0.56, reliabilitySlope: 0.08,
+    competitionSlope: 0.07,
+    play: { analystBlock: true, opportunistMode: true, sureWinnerTrumpRisk: 0.68 },
+  }),
+  tunedD: mergeWeights(BASE_WEIGHTS, {
+    trump: { A: 0.96, K: 0.82, Q: 0.52, J: 0.34, mid: 0.17, low: 0.04, long: 0.06 },
+    nonTrump: {
+      aceWithTrump: 0.55, aceNoTrump: 0.90, kingBase: 0.30, kingWithAce: 0.11,
+      kingShort: 0.03, queenBase: 0.11, queenProtected: 0.07, queenLoose: -0.05, jack: 0.03,
+    },
+    shape: { voidBonus: 0.18, singletonBonus: 0.06 },
+    noTrumpMultiplier: 1.24, reliabilityFloor: 0.52, reliabilitySlope: 0.10,
+    competitionSlope: 0.065,
+    play: { analystBlock: true, opportunistMode: true, sureWinnerTrumpRisk: 0.72 },
+  }),
+  tunedE: mergeWeights(BASE_WEIGHTS, {
+    trump: { A: 0.95, K: 0.79, Q: 0.51, J: 0.34, mid: 0.16, low: 0.03, long: 0.05 },
+    nonTrump: {
+      aceWithTrump: 0.53, aceNoTrump: 0.88, kingBase: 0.27, kingWithAce: 0.10,
+      kingShort: 0.02, queenBase: 0.08, queenProtected: 0.05, queenLoose: -0.08, jack: 0.02,
+    },
+    shape: { voidBonus: 0.24, singletonBonus: 0.09 },
+    noTrumpMultiplier: 1.18, reliabilityFloor: 0.55, reliabilitySlope: 0.085,
+    competitionSlope: 0.075,
+    play: { analystBlock: true, opportunistMode: true, sureWinnerTrumpRisk: 0.66 },
+  }),
+  tunedF: mergeWeights(BASE_WEIGHTS, {
+    trump: { A: 0.95, K: 0.80, Q: 0.53, J: 0.35, mid: 0.17, low: 0.04, long: 0.06 },
+    nonTrump: {
+      aceWithTrump: 0.56, aceNoTrump: 0.88, kingBase: 0.27, kingWithAce: 0.10,
+      kingShort: 0.03, queenBase: 0.09, queenProtected: 0.06, queenLoose: -0.07, jack: 0.02,
+    },
+    shape: { voidBonus: 0.21, singletonBonus: 0.07 },
+    noTrumpMultiplier: 1.21, reliabilityFloor: 0.55, reliabilitySlope: 0.09,
+    competitionSlope: 0.065,
+    play: { analystBlock: true, opportunistMode: true, sureWinnerTrumpRisk: 0.69 },
+  }),
 };
 
 function mergeWeights(base, patch) {
