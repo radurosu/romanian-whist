@@ -623,7 +623,20 @@ body {
 <button id="history-btn" style="display:none" onclick="showHistory()">History</button>
 <button id="download-btn" style="display:none" onclick="downloadGameLogs()">Download Logs</button>
 
+<script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-database-compat.js"></script>
 <script>
+// ─── Firebase (for game log persistence) ───
+let fbDb = null;
+try {
+  firebase.initializeApp({
+    apiKey: "AIzaSyBHSb_-IbgjkcFWmdA2WkfuXg-Zl691khQ",
+    databaseURL: "https://rowhist26-default-rtdb.firebaseio.com",
+    projectId: "rowhist26",
+  });
+  fbDb = firebase.database();
+} catch(e) { console.warn('Firebase init failed, logs will be local only', e); }
+
 // ─── Sound Engine (Web Audio API synth) ───
 const AudioCtx = window.AudioContext || window.webkitAudioContext;
 let audioCtx = null;
@@ -896,18 +909,48 @@ function logGameEnd() {
   const winner = G.scores.indexOf(Math.max(...G.scores));
   G.gameLog.winner = G.playerNames[winner];
   G.gameLog.winnerScore = G.scores[winner];
+  G.gameLog.mode = 'solo';
 
   // Save to localStorage
   try {
     const logs = JSON.parse(localStorage.getItem('wist-game-logs') || '[]');
     logs.push(G.gameLog);
-    // Keep last 50 games
     while (logs.length > 50) logs.shift();
     localStorage.setItem('wist-game-logs', JSON.stringify(logs));
   } catch(e) {}
+  // Save to Firebase
+  if (fbDb) {
+    const key = G.gameLog.timestamp.replace(/[:.]/g, '-');
+    try { fbDb.ref(`gameLogs/${key}`).set(G.gameLog); } catch(e) { console.warn('Firebase log save failed', e); }
+  }
 }
 
 function downloadGameLogs() {
+  if (fbDb) {
+    const btn = document.getElementById('download-btn');
+    if (btn) btn.textContent = 'Loading...';
+    fbDb.ref('gameLogs').orderByChild('timestamp').once('value').then(snap => {
+      const logs = [];
+      snap.forEach(c => { const v = c.val(); if (v && v.timestamp) logs.push(v); });
+      if (btn) btn.textContent = 'Download Logs';
+      if (!logs.length) { alert('No games recorded yet.'); return; }
+      const blob = new Blob([JSON.stringify(logs, null, 2)], {type: 'application/json'});
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `whist-games-${new Date().toISOString().slice(0,10)}.json`;
+      a.click();
+      URL.revokeObjectURL(url);
+    }).catch(() => {
+      if (btn) btn.textContent = 'Download Logs';
+      downloadLocalLogs();
+    });
+  } else {
+    downloadLocalLogs();
+  }
+}
+
+function downloadLocalLogs() {
   try {
     const logs = JSON.parse(localStorage.getItem('wist-game-logs') || '[]');
     if (logs.length === 0) { alert('No games recorded yet.'); return; }
