@@ -704,7 +704,10 @@ const SUIT_COLOR = {spades:'black', hearts:'red', diamonds:'red', clubs:'black'}
 const ALL_OPPONENTS = ['Viktor','Sasha','Sniper','Katya','Tempo2'];
 
 function pickOpponents(count) {
-  // Shuffle and pick `count` opponents — different mix each game
+  if (window._geminiApiKey) {
+    const others = ALL_OPPONENTS.slice().sort(() => Math.random() - 0.5);
+    return ['Gemini', ...others.slice(0, count - 1)];
+  }
   const shuffled = ALL_OPPONENTS.slice().sort(() => Math.random() - 0.5);
   return shuffled.slice(0, count);
 }
@@ -775,6 +778,7 @@ const PLAYERS = {
   'Sniper': { style: 'sniper',    face: '🎯', noise: 0.12 },
   'Katya':  { style: 'precision', face: '🦊', noise: 0.10 },
   'Tempo2': { style: 'tempo',     face: '🔥', noise: 0.18 },
+  'Gemini': { style: 'gemini',    face: '🤖', noise: 0 },
 };
 
 function getFace(name) {
@@ -788,6 +792,227 @@ function getPlayer(playerIndex) {
 
 function getStyle(playerIndex) {
   return getPlayer(playerIndex).style;
+}
+
+// ─── Gemini AI Player ───
+const RANK_NAMES = {A:'Ace',K:'King',Q:'Queen',J:'Jack','10':'10','9':'9','8':'8','7':'7','6':'6','5':'5','4':'4','3':'3','2':'2'};
+const SUIT_NAMES = {spades:'Spades',hearts:'Hearts',diamonds:'Diamonds',clubs:'Clubs'};
+
+function cardToText(card) {
+  return `${RANK_NAMES[card.rank]} of ${SUIT_NAMES[card.suit]}`;
+}
+
+function textToCard(text, legalMoves) {
+  const t = text.toLowerCase();
+  const rankMap = {ace:'A',king:'K',queen:'Q',jack:'J','10':'10','9':'9','8':'8','7':'7','6':'6','5':'5','4':'4','3':'3','2':'2'};
+  const suitMap = {spades:'spades',hearts:'hearts',diamonds:'diamonds',clubs:'clubs',spade:'spades',heart:'hearts',diamond:'diamonds',club:'clubs'};
+  for (const card of legalMoves) {
+    const rname = RANK_NAMES[card.rank].toLowerCase();
+    const sname = SUIT_NAMES[card.suit].toLowerCase();
+    if (t.includes(rname) && (t.includes(sname) || t.includes(sname.slice(0,-1)))) return card;
+  }
+  // fallback: try rank only if unique
+  for (const card of legalMoves) {
+    const rname = RANK_NAMES[card.rank].toLowerCase();
+    if (t.includes(rname)) {
+      const matches = legalMoves.filter(c => RANK_NAMES[c.rank].toLowerCase() === rname);
+      if (matches.length === 1) return matches[0];
+    }
+  }
+  return null;
+}
+
+async function callGeminiAPI(prompt) {
+  try {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 10000);
+    const resp = await fetch(
+      `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${window._geminiApiKey}`,
+      {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        signal: controller.signal,
+        body: JSON.stringify({
+          contents: [{parts: [{text: prompt}]}],
+          generationConfig: {temperature: 0.3, maxOutputTokens: 150}
+        })
+      }
+    );
+    clearTimeout(timeoutId);
+    const data = await resp.json();
+    return data.candidates?.[0]?.content?.parts?.[0]?.text?.trim() || null;
+  } catch(e) {
+    console.warn('Gemini API error:', e);
+    return null;
+  }
+}
+
+function buildGeminiBidPrompt(playerIndex) {
+  const hand = G.hands[playerIndex];
+  const cpp = G.cardsPerPlayer;
+  const trumpName = G.trumpSuit ? SUIT_NAMES[G.trumpSuit] : 'No Trump';
+  const trumpCardText = G.trumpCard ? `${RANK_NAMES[G.trumpCard.rank]} of ${trumpName} (this card is face-up and REMOVED from play — the next highest ${trumpName} in your hand is the top trump)` : 'none (no trump this round)';
+  const bidderPos = G.bids.filter(b => b !== null).length + 1;
+  const isLast = bidderPos === G.numPlayers;
+  const alreadyBid = G.bids.map((b,i) => b !== null ? `  - ${G.playerNames[i]}: bid ${b}` : null).filter(Boolean).join('\n') || '  (you are first to bid)';
+  const forbiddenNote = isLast ? `\nIMPORTANT: You are the last bidder. You CANNOT bid ${cpp - G.bids.filter(b=>b!==null).reduce((a,b)=>a+b,0)} (would make total equal cards per player).` : '';
+
+  return `You are playing Romanian Whist, a trick-taking card game.
+
+RULES:
+- Players MUST follow the led suit if possible.
+- If you cannot follow suit, you MUST play trump if you have any.
+- Only if you have neither led suit nor trump can you play freely.
+- Scoring: exact bid = 5 + bid points. Miss = -|tricks_won - bid|. Bid 0 and make it = 5 points.
+
+GAME STATE:
+- Players: ${G.numPlayers} | Trump: ${trumpName} | Trump card: ${trumpCardText}
+- Cards per player this round: ${cpp}
+- You are bidder ${bidderPos} of ${G.numPlayers}
+
+BIDS SO FAR:
+${alreadyBid}${forbiddenNote}
+
+YOUR HAND:
+${hand.map(cardToText).join(', ')}
+
+STRATEGIC GUIDANCE:
+- The trump card shown is OUT OF PLAY — your next-highest trump is the top trump.
+- Count likely winners: Aces win. Kings win when the Ace is gone or out of play. Queens need A and K gone.
+- Suit length matters: A-K-x-x-x in one suit can produce 4-5 tricks by running the suit. Scattered honors produce fewer.
+- Void suits (0 cards) with trumps = ruffing tricks (~0.5 extra tricks each). Singletons become voids after one lead.
+- Distribution: if you hold 5 of a suit, opponents share only 3 — your small cards may become winners.
+- Position: bidding early = lean conservative. Bidding later = exploit gaps.
+- If total bids running high, not everyone can make it — be cautious. If low, tricks are unclaimed.
+
+Valid bid range: 0 to ${cpp}.
+Respond with ONLY a single integer (your bid). Nothing else.`;
+}
+
+function buildGeminiPlayPrompt(playerIndex, legalMoves, ledSuit) {
+  const hand = G.hands[playerIndex];
+  const bid = G.bids[playerIndex];
+  const won = G.tricksWon[playerIndex];
+  const need = bid - won;
+  const cpp = G.cardsPerPlayer;
+  const trumpName = G.trumpSuit ? SUIT_NAMES[G.trumpSuit] : 'No Trump';
+  const trumpCardText = G.trumpCard ? `${RANK_NAMES[G.trumpCard.rank]} of ${trumpName} (removed from play)` : 'none';
+  const trickPos = G.currentTrick.length;
+  const posNames = ['leading','2nd','3rd','4th','5th','6th'];
+  const posText = posNames[trickPos] || `${trickPos+1}th`;
+  const isLast = trickPos === G.numPlayers - 1;
+
+  const currentTrickText = G.currentTrick.length === 0 ? '(you are leading — no cards played yet)' :
+    G.currentTrick.map(e => `  ${G.playerNames[e.playerIndex]}: ${cardToText(e.card)}`).join('\n');
+
+  const playersStatus = G.bids.map((b,i) => {
+    if (b === null) return null;
+    const w = G.tricksWon[i];
+    const n = b - w;
+    const state = n > 0 ? `needs ${n} more` : n === 0 ? 'DONE (will try to lose)' : `OVER (made ${w}, bid ${b})`;
+    return `  - ${G.playerNames[i]}: bid ${b}, won ${w} — ${state}`;
+  }).filter(Boolean).join('\n');
+
+  const playedThisRound = G.playedCards.length > 0 ?
+    G.playedCards.map(cardToText).join(', ') : '(none yet)';
+
+  const legalList = legalMoves.map((c,i) => `  ${i+1}. ${cardToText(c)}`).join('\n');
+
+  return `You are playing Romanian Whist, a trick-taking card game.
+
+RULES:
+- Players MUST follow the led suit if possible.
+- If you cannot follow suit, you MUST play trump if you have any.
+- Only if you have neither led suit nor trump can you play freely.
+- Highest card of led suit wins, unless trumped — highest trump wins.
+
+GAME STATE:
+- Players: ${G.numPlayers} | Trump: ${trumpName} | Trump card: ${trumpCardText}
+- Round: ${G.currentRoundIndex + 1} of ${G.roundSequence.length} | Cards per player: ${cpp}
+
+PLAYER STATUS:
+${playersStatus}
+
+YOU (${G.playerNames[playerIndex]}): bid ${bid}, won ${won} — ${need > 0 ? `need ${need} more trick${need>1?'s':''}` : need === 0 ? 'DONE, avoid winning' : 'OVER bid, minimize damage'}
+
+CARDS PLAYED THIS ROUND (for counting):
+${playedThisRound}
+
+CURRENT TRICK (${posText} to play${isLast ? ' — LAST position, perfect information' : ''}):
+${currentTrickText}${ledSuit ? `\n  Led suit: ${SUIT_NAMES[ledSuit]}` : ''}
+
+YOUR LEGAL MOVES:
+${legalList}
+
+STRATEGIC GUIDANCE:
+- CONTROL: winning a trick means you choose the next suit — major advantage.
+- CARD PROTECTION: don't play K when A is still unplayed and someone ahead might hold it. Duck and save it.
+- FINESSING: holding A-Q in a suit, leading low toward Q can win both tricks if K is to your left.
+- SUIT ESTABLISHMENT: 5+ cards with top honors — lead repeatedly, small cards become winners.
+- SACRIFICE: lose a trick deliberately to gain better position or force a favorable lead.
+- TRUMP MANAGEMENT: don't trump eagerly if you need trump for protection later.
+- DEFENSIVE: when bid is made, play lowest cards — extra tricks cost points.
+- COUNTING: if A♠ has been played, your K♠ is now the master. Check played cards above.
+- POSITION: last to play = perfect information — use cheapest winner, dump safely.
+- OPPONENTS: DONE players dump low and aren't competing. Players needing tricks are threats.
+
+Respond with ONLY the card to play as "RANK of SUIT" (e.g. "Ace of Spades"). Nothing else.`;
+}
+
+let _geminiMode = 'algo'; // 'api' or 'algo' — tracks last Gemini decision source
+
+async function geminiComputeBid(playerIndex) {
+  const cpp = G.cardsPerPlayer;
+  if (cpp <= 2) {
+    _geminiMode = 'algo';
+    if (cpp === 1) {
+      const hand = G.hands[playerIndex];
+      const player = PLAYERS['Gemini'];
+      let est = compute1CardWinProb(hand[0], G.numPlayers, G.trumpSuit);
+      est += (Math.random() - 0.5) * 0.1;
+      return constrainBid(Math.max(0, Math.min(1, Math.round(est))), est, cpp);
+    }
+    return constrainBid(pimcBid(playerIndex, 80), pimcBid(playerIndex, 80), cpp);
+  }
+  const prompt = buildGeminiBidPrompt(playerIndex);
+  const response = await callGeminiAPI(prompt);
+  if (response !== null) {
+    const match = response.match(/\d+/);
+    if (match) {
+      const bid = parseInt(match[0]);
+      if (bid >= 0 && bid <= cpp) {
+        _geminiMode = 'api';
+        return constrainBid(bid, bid, cpp);
+      }
+    }
+  }
+  // Fallback to PIMC
+  _geminiMode = 'algo';
+  console.warn('Gemini bid fallback to PIMC');
+  const bid = pimcBid(playerIndex, 80);
+  return constrainBid(bid, bid, cpp);
+}
+
+async function geminiChooseCard(playerIndex, legalMoves, ledSuit) {
+  if (legalMoves.length === 1) { _geminiMode = 'algo'; return legalMoves[0]; }
+  const cpp = G.cardsPerPlayer;
+  if (cpp <= 2) {
+    _geminiMode = 'algo';
+    return pimcChooseCard(playerIndex, legalMoves, 80);
+  }
+  const prompt = buildGeminiPlayPrompt(playerIndex, legalMoves, ledSuit);
+  const response = await callGeminiAPI(prompt);
+  if (response !== null) {
+    const card = textToCard(response, legalMoves);
+    if (card) {
+      _geminiMode = 'api';
+      return card;
+    }
+  }
+  // Fallback to PIMC
+  _geminiMode = 'algo';
+  console.warn('Gemini play fallback to PIMC, response was:', response);
+  return pimcChooseCard(playerIndex, legalMoves, 80);
 }
 
 // ─── Game State ───
@@ -1122,7 +1347,14 @@ function processAIBid() {
   if (G.phase !== 'bidding') return;
   const p = G.currentBidderIndex;
   if (p === 0) return;
-  placeBid(p, computeAIBid(p));
+  if (getStyle(p) === 'gemini') {
+    geminiComputeBid(p).then(bid => {
+      if (G.phase !== 'bidding' || G.currentBidderIndex !== p) return;
+      placeBid(p, bid);
+    });
+  } else {
+    placeBid(p, computeAIBid(p));
+  }
 }
 
 // ═══════════════════════════════════════════════════════════════════
@@ -1987,7 +2219,14 @@ function processAIPlay() {
   if (p === 0) return;
   const ledSuit = G.currentTrick.length > 0 ? G.currentTrick[0].card.suit : null;
   const legal = getLegalMoves(G.hands[p], ledSuit, G.trumpSuit);
-  playCard(p, chooseAICard(p, legal, ledSuit));
+  if (getStyle(p) === 'gemini') {
+    geminiChooseCard(p, legal, ledSuit).then(card => {
+      if (G.phase !== 'playing') return;
+      playCard(p, card);
+    });
+  } else {
+    playCard(p, chooseAICard(p, legal, ledSuit));
+  }
 }
 
 // ═══════════════════════════════════════════════════════════════════
@@ -2539,7 +2778,9 @@ function renderOpponents() {
     const isLeader = G.phase === 'playing' && G.trickLeaderIndex === p && G.currentTrick.length === 0;
 
     const face = getFace(G.playerNames[p]);
-    let label = `<div class="player-label ${isActive ? 'active-player' : ''} ${isLeader ? 'trick-leader' : ''}">${face} ${G.playerNames[p]}`;
+    const isGemini = G.playerNames[p] === 'Gemini';
+    const geminiBadge = isGemini ? ` <span style="font-size:10px;opacity:0.6">[${_geminiMode==='api'?'🤖 AI':'⚙️ algo'}]</span>` : '';
+    let label = `<div class="player-label ${isActive ? 'active-player' : ''} ${isLeader ? 'trick-leader' : ''}">${face} ${G.playerNames[p]}${geminiBadge}`;
     if (G.bids[p] !== null) {
       label += ` <span style="opacity:0.7">(${G.biddingComplete ? G.tricksWon[p] : G.bids[p]}`;
       if (G.biddingComplete) label += `/${G.bids[p]}`;
@@ -2830,6 +3071,8 @@ window.addEventListener('DOMContentLoaded', () => {
   //   ?cards=6        — override to play only 6-card rounds
   //   ?players=4&cards=5  — 4 players, 5-card rounds only
   const params = new URLSearchParams(window.location.search);
+  const geminiKey = params.get('gemini');
+  if (geminiKey) window._geminiApiKey = geminiKey;
   const autoPlayers = parseInt(params.get('players'));
   const autoCards = parseInt(params.get('cards'));
   if (autoCards >= 1 && autoCards <= 8) {
