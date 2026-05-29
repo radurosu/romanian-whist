@@ -960,6 +960,16 @@ Respond with ONLY the card to play as "RANK of SUIT" (e.g. "Ace of Spades"). Not
 }
 
 let _geminiMode = 'algo'; // 'api' or 'algo' — tracks last Gemini decision source
+let _geminiLastCallTime = 0;
+const GEMINI_MIN_INTERVAL = 5000; // 5s between calls = max 12/min, safely under 15 RPM
+
+async function callGeminiRateLimited(prompt) {
+  const now = Date.now();
+  const wait = GEMINI_MIN_INTERVAL - (now - _geminiLastCallTime);
+  if (wait > 0) await new Promise(r => setTimeout(r, wait));
+  _geminiLastCallTime = Date.now();
+  return callGeminiAPI(prompt);
+}
 
 async function geminiComputeBid(playerIndex) {
   const cpp = G.cardsPerPlayer;
@@ -975,7 +985,7 @@ async function geminiComputeBid(playerIndex) {
     return constrainBid(pimcBid(playerIndex, 80), pimcBid(playerIndex, 80), cpp);
   }
   const prompt = buildGeminiBidPrompt(playerIndex);
-  const response = await callGeminiAPI(prompt);
+  const response = await callGeminiRateLimited(prompt);
   if (response !== null) {
     const match = response.match(/\d+/);
     if (match) {
@@ -1001,7 +1011,7 @@ async function geminiChooseCard(playerIndex, legalMoves, ledSuit) {
     return pimcChooseCard(playerIndex, legalMoves, 80);
   }
   const prompt = buildGeminiPlayPrompt(playerIndex, legalMoves, ledSuit);
-  const response = await callGeminiAPI(prompt);
+  const response = await callGeminiRateLimited(prompt);
   if (response !== null) {
     const card = textToCard(response, legalMoves);
     if (card) {
@@ -1992,11 +2002,12 @@ function computeAIBid(playerIndex) {
     return est;
   }
 
-  // PIMC bidding for Viktor, Sasha, and Sniper (multi-card rounds)
+  // PIMC bidding for all main styles (multi-card rounds)
   // Bias corrects for sim playout underestimating real trick-taking
-  if ((style === 'void' || style === 'tempo' || style === 'sniper') && cpp >= 2) {
+  // Bias values tuned from game data: higher = more chronic underbidder
+  if ((style === 'void' || style === 'tempo' || style === 'sniper' || style === 'precision') && cpp >= 2) {
     const sims = style === 'tempo' ? 50 : 80;
-    const bias = {void: 0.2, tempo: 0.15, sniper: 0.3}[style] || 0;
+    const bias = {void: 0.35, tempo: 0.15, sniper: 0.3, precision: 0.4}[style] || 0;
     let bid = pimcBid(playerIndex, sims) + bias * Math.min(1, cpp / 4);
     bid = bidAwarenessAdj(bid);
     bid = Math.max(0, Math.min(cpp, Math.round(bid)));

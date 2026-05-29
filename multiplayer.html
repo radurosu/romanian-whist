@@ -1801,11 +1801,11 @@ function computeAIBid(playerIndex) {
     return est;
   }
 
-  // PIMC bidding for Viktor, Sasha, and Sniper (multi-card rounds)
+  // PIMC bidding for all main styles (multi-card rounds)
   // Bias corrects for sim playout underestimating real trick-taking
-  if ((style === 'void' || style === 'tempo' || style === 'sniper') && cpp >= 2) {
+  if ((style === 'void' || style === 'tempo' || style === 'sniper' || style === 'precision') && cpp >= 2) {
     const sims = style === 'tempo' ? 50 : 80;
-    const bias = {void: 0.2, tempo: 0.15, sniper: 0.3}[style] || 0;
+    const bias = {void: 0.35, tempo: 0.15, sniper: 0.3, precision: 0.4}[style] || 0;
     let bid = pimcBid(playerIndex, sims) + bias * Math.min(1, cpp / 4);
     bid = bidAwarenessAdj(bid);
     bid = Math.max(0, Math.min(cpp, Math.round(bid)));
