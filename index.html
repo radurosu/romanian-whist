@@ -773,11 +773,11 @@ const OPPONENT_AREAS = {
  * ═══════════════════════════════════════════════════════════════════
  */
 const PLAYERS = {
-  'Viktor': { style: 'void',      face: '🐉', noise: 0.12 },
-  'Sasha':  { style: 'tempo',     face: '⚡', noise: 0.15 },
-  'Sniper': { style: 'sniper',    face: '🎯', noise: 0.12 },
-  'Katya':  { style: 'precision', face: '🦊', noise: 0.10 },
-  'Tempo2': { style: 'tempo',     face: '🔥', noise: 0.18 },
+  'Viktor': { style: 'void',      face: '🐉', noise: 0.10 },
+  'Sasha':  { style: 'tempo',     face: '⚡', noise: 0.12 },
+  'Sniper': { style: 'sniper',    face: '🎯', noise: 0.08 },
+  'Katya':  { style: 'precision', face: '🦊', noise: 0.08 },
+  'Tempo2': { style: 'tempo',     face: '🔥', noise: 0.15 },
   'Gemini': { style: 'gemini',    face: '🤖', noise: 0 },
 };
 
@@ -1680,27 +1680,30 @@ function planTricks(hand, bid, tricksWon) {
 //  PIMC ENGINE — Perfect Information Monte Carlo
 // ═══════════════════════════════════════════════════════════════════
 
-// Fast play-out: simulate remaining tricks with simple rules.
-// All players use the void/highest strategy (fast, no recursion).
-function simPlayOut(hands, bids, tricksWon, trumpSuit, leader, numPlayers) {
-  // Deep copy hands
+// Fast play-out: simulate remaining tricks with position-aware rules.
+// Position-aware: 2nd-hand low, last-hand decisive, suit establishment, trump conservation.
+// spiteTarget: if defined, player index whose tricks we want to deny when already made.
+function simPlayOut(hands, bids, tricksWon, trumpSuit, leader, numPlayers, spiteTarget) {
   const h = hands.map(hand => hand.slice());
   const tw = tricksWon.slice();
-  const maxTricks = h[0].length;
   let ld = leader;
 
+  const maxTricks = Math.max(...h.map(hh => hh.length));
   for (let t = 0; t < maxTricks; t++) {
-    if (h[ld].length === 0) break;
+    if (!h[ld] || h[ld].length === 0) break;
     const trick = [];
     let cur = ld;
-    for (let p = 0; p < numPlayers; p++) {
-      if (h[cur].length === 0) { cur = (cur + 1) % numPlayers; continue; }
-      const ledSuit = trick.length > 0 ? trick[0].card.suit : null;
 
-      // Get legal moves
+    for (let p = 0; p < numPlayers; p++) {
+      if (!h[cur] || h[cur].length === 0) { cur = (cur + 1) % numPlayers; continue; }
+      const ls = trick.length > 0 ? trick[0].card.suit : null;
+      const pos = trick.length;
+      const isLast = pos === numPlayers - 1;
+
+      // Legal moves
       let legal = h[cur];
-      if (ledSuit) {
-        const follow = legal.filter(c => c.suit === ledSuit);
+      if (ls) {
+        const follow = legal.filter(c => c.suit === ls);
         if (follow.length > 0) legal = follow;
         else if (trumpSuit) {
           const trumps = legal.filter(c => c.suit === trumpSuit);
@@ -1708,42 +1711,92 @@ function simPlayOut(hands, bids, tricksWon, trumpSuit, leader, numPlayers) {
         }
       }
 
-      // Smarter play: position-aware card selection
       const need = tw[cur] < (bids[cur] || 0);
+      const made = !need;
+      const curBest = trick.length > 0
+        ? trick.reduce((b, t) => cardBeats(t.card, b.card, ls) ? t : b)
+        : null;
+      const myWinners = curBest
+        ? legal.filter(c => cardBeats(c, curBest.card, ls))
+        : legal.slice();
+
       let card;
-      if (need) {
-        if (trick.length > 0) {
-          // Following: check if we can actually win
-          const ls = trick[0].card.suit;
-          const curBest = trick.reduce((b, t) => cardBeats(t.card, b.card, ls) ? t : b);
-          const winners = legal.filter(c => cardBeats(c, curBest.card, ls));
-          if (winners.length > 0) {
-            // Win with lowest winning card (efficient)
-            card = winners.reduce((b, c) => RANK_VALUE[c.rank] < RANK_VALUE[b.rank] ? c : b);
+      if (!ls) {
+        // ── Leading ──
+        if (need) {
+          // Cash aces first
+          const aces = legal.filter(c => c.rank === 'A');
+          if (aces.length) {
+            card = aces[0];
           } else {
-            // Can't win — play lowest to conserve strong cards
-            card = legal.reduce((b, c) => RANK_VALUE[c.rank] < RANK_VALUE[b.rank] ? c : b);
+            // Lead from longest non-trump suit to establish
+            let bestSuit = null, bestLen = 0;
+            for (const s of SUITS) {
+              if (s === trumpSuit) continue;
+              const len = legal.filter(c => c.suit === s).length;
+              if (len > bestLen) { bestLen = len; bestSuit = s; }
+            }
+            if (bestSuit && bestLen >= 3) {
+              const inSuit = legal.filter(c => c.suit === bestSuit);
+              card = inSuit.reduce((b, c) => RANK_VALUE[c.rank] > RANK_VALUE[b.rank] ? c : b);
+            } else {
+              // Lead shortest non-trump to create void
+              let shortSuit = null, shortLen = 99;
+              for (const s of SUITS) {
+                if (s === trumpSuit) continue;
+                const len = legal.filter(c => c.suit === s).length;
+                if (len > 0 && len < shortLen) { shortLen = len; shortSuit = s; }
+              }
+              const pool = shortSuit ? legal.filter(c => c.suit === shortSuit) : legal;
+              card = pool.reduce((b, c) => RANK_VALUE[c.rank] < RANK_VALUE[b.rank] ? c : b);
+            }
           }
         } else {
-          // Leading: play highest
-          card = legal.reduce((b, c) => RANK_VALUE[c.rank] > RANK_VALUE[b.rank] ? c : b);
+          card = legal.reduce((b, c) => RANK_VALUE[c.rank] < RANK_VALUE[b.rank] ? c : b);
         }
       } else {
-        card = legal.reduce((b, c) => RANK_VALUE[c.rank] < RANK_VALUE[b.rank] ? c : b);
+        // ── Following ──
+        if (need) {
+          if (myWinners.length > 0) {
+            if (isLast) {
+              // Cheapest winner when last
+              card = myWinners.reduce((b, c) => RANK_VALUE[c.rank] < RANK_VALUE[b.rank] ? c : b);
+            } else {
+              // Not last: only win with a good winner (rank>=10 or trump), else duck
+              const goodWinners = myWinners.filter(c => RANK_VALUE[c.rank] >= 10 || c.suit === trumpSuit);
+              if (goodWinners.length > 0) {
+                card = goodWinners.reduce((b, c) => RANK_VALUE[c.rank] < RANK_VALUE[b.rank] ? c : b);
+              } else {
+                card = legal.reduce((b, c) => RANK_VALUE[c.rank] < RANK_VALUE[b.rank] ? c : b);
+              }
+            }
+          } else {
+            // Can't win — dump lowest
+            card = legal.reduce((b, c) => RANK_VALUE[c.rank] < RANK_VALUE[b.rank] ? c : b);
+          }
+        } else if (made && spiteTarget !== undefined && curBest && curBest.player === spiteTarget && myWinners.length > 0) {
+          // Spite: beat spiteTarget if they're currently winning and we can
+          card = myWinners.reduce((b, c) => RANK_VALUE[c.rank] < RANK_VALUE[b.rank] ? c : b);
+        } else {
+          // Don't need tricks: play lowest non-winner
+          const nonWinners = curBest
+            ? legal.filter(c => !cardBeats(c, curBest.card, ls))
+            : legal;
+          const pool = nonWinners.length > 0 ? nonWinners : legal;
+          card = pool.reduce((b, c) => RANK_VALUE[c.rank] < RANK_VALUE[b.rank] ? c : b);
+        }
       }
 
-      // Remove card from hand
       h[cur] = h[cur].filter(c => !(c.rank === card.rank && c.suit === card.suit));
       trick.push({player: cur, card});
       cur = (cur + 1) % numPlayers;
     }
 
-    // Determine winner
     if (trick.length === 0) break;
-    const ls = trick[0].card.suit;
+    const ls2 = trick[0].card.suit;
     let best = trick[0];
     for (let i = 1; i < trick.length; i++) {
-      if (cardBeats(trick[i].card, best.card, ls)) best = trick[i];
+      if (cardBeats(trick[i].card, best.card, ls2)) best = trick[i];
     }
     tw[best.player]++;
     ld = best.player;
@@ -1766,6 +1819,17 @@ function simScore(playerIndex, tricksWon, bids) {
   }
 
   return myScore - 0.3 * (bestOpp > -Infinity ? bestOpp : 0);
+}
+
+// Find the opponent closest to making their bid (the most dangerous threat)
+function findSpiteTarget(playerIndex) {
+  let tgt = -1, minGap = Infinity;
+  for (let i = 0; i < G.bids.length; i++) {
+    if (i === playerIndex || G.bids[i] === null) continue;
+    const gap = (G.bids[i] || 0) - G.tricksWon[i];
+    if (gap > 0 && gap < minGap) { minGap = gap; tgt = i; }
+  }
+  return tgt >= 0 ? tgt : undefined;
 }
 
 // Sample opponent hands from unknown cards, weighted by their bids
@@ -1838,6 +1902,10 @@ function pimcChooseCard(playerIndex, legalMoves, numSims) {
   const scores = {};
   for (const c of legalMoves) scores[c.rank + c.suit] = 0;
 
+  // Spite: when already made, target the opponent closest to making their bid
+  const alreadyMade = G.tricksWon[playerIndex] >= (G.bids[playerIndex] || 0);
+  const spite = alreadyMade ? findSpiteTarget(playerIndex) : undefined;
+
   for (let sim = 0; sim < numSims; sim++) {
     const oppHands = sampleOpponentHands(hand, playerIndex);
 
@@ -1869,11 +1937,12 @@ function pimcChooseCard(playerIndex, legalMoves, numSims) {
         tw[best.playerIndex]++;
         leader = best.playerIndex;
         // Simulate remaining tricks
-        const result = simPlayOut(allHands, G.bids, tw, G.trumpSuit, leader, G.numPlayers);
-        scores[card.rank + card.suit] += simScore(playerIndex, result, G.bids);
+        const result = simPlayOut(allHands, G.bids, tw, G.trumpSuit, leader, G.numPlayers, spite);
+        let sc = simScore(playerIndex, result, G.bids);
+        if (spite !== undefined && result[spite] !== G.bids[spite]) sc += 2.0;
+        scores[card.rank + card.suit] += sc;
       } else {
         // Trick not complete — simulate remaining players in this trick, then rest
-        // For simplicity: simulate from next player onward
         const nextPlayer = (playerIndex + 1) % G.numPlayers;
 
         // Complete this trick with opponent plays
@@ -1909,8 +1978,10 @@ function pimcChooseCard(playerIndex, legalMoves, numSims) {
         leader = best.playerIndex;
 
         // Simulate remaining tricks
-        const result = simPlayOut(allHands, G.bids, tw, G.trumpSuit, leader, G.numPlayers);
-        scores[card.rank + card.suit] += simScore(playerIndex, result, G.bids);
+        const result = simPlayOut(allHands, G.bids, tw, G.trumpSuit, leader, G.numPlayers, spite);
+        let sc = simScore(playerIndex, result, G.bids);
+        if (spite !== undefined && result[spite] !== G.bids[spite]) sc += 2.0;
+        scores[card.rank + card.suit] += sc;
       }
     }
   }
@@ -2005,11 +2076,15 @@ function computeAIBid(playerIndex) {
   // PIMC bidding for all main styles (multi-card rounds)
   // Bias corrects for sim playout underestimating real trick-taking
   // Bias values tuned from game data: higher = more chronic underbidder
+  // PIMC bidding — bias & aggr tuned from 50k-game optimization
   if ((style === 'void' || style === 'tempo' || style === 'sniper' || style === 'precision') && cpp >= 2) {
-    const sims = style === 'tempo' ? 50 : 80;
-    const bias = {void: 0.35, tempo: 0.15, sniper: 0.3, precision: 0.4}[style] || 0;
+    const sims = style === 'tempo' ? 60 : 80;
+    const biasMap = {void: 0.229, tempo: 0.020, sniper: 0.070, precision: 0.165};
+    const aggrMap = {void: 1.00,  tempo: 1.02,  sniper: 1.00,  precision: 0.98};
+    const bias = biasMap[style] || 0;
+    const aggr = aggrMap[style] || 1.0;
     let bid = pimcBid(playerIndex, sims) + bias * Math.min(1, cpp / 4);
-    bid = bidAwarenessAdj(bid);
+    bid = bidAwarenessAdj(bid) * aggr;
     bid = Math.max(0, Math.min(cpp, Math.round(bid)));
     bid = constrainBid(bid, bid, cpp);
     return bid;
@@ -2248,9 +2323,9 @@ function chooseAICard(playerIndex, legalMoves, ledSuit) {
 
   const style = getStyle(playerIndex);
 
-  // PIMC play for Viktor and Sasha
-  if (style === 'void' || style === 'tempo') {
-    const sims = style === 'void' ? 80 : 40;
+  // PIMC play for all main AI styles
+  if (style === 'void' || style === 'tempo' || style === 'sniper' || style === 'precision') {
+    const sims = style === 'tempo' ? 40 : 80;
     return pimcChooseCard(playerIndex, legalMoves, sims);
   }
   const bid = G.bids[playerIndex];

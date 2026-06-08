@@ -1,0 +1,38 @@
+{
+  "rules": {
+    ".read": false,
+    ".write": false,
+
+    "sessions": {
+      "$code": {
+        ".read": "auth != null",
+        ".write": "auth != null && (!data.exists() || data.child('host').val() === auth.uid)",
+
+        "players": {
+          "$uid": {
+            ".write": "auth != null && $uid === auth.uid"
+          }
+        },
+        "actions": {
+          ".write": "auth != null",
+          "$action": {
+            ".validate": "newData.child('uid').val() === auth.uid"
+          }
+        },
+        "chat": {
+          ".write": "auth != null",
+          "$msg": {
+            ".validate": "newData.child('uid').val() === auth.uid && newData.child('text').isString() && newData.child('text').val().length <= 500"
+          }
+        }
+      }
+    },
+
+    "gameLogs": {
+      ".read": "auth != null",
+      "$key": {
+        ".write": "auth != null"
+      }
+    }
+  }
+}
