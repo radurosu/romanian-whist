@@ -196,14 +196,23 @@ body {
   z-index: 100;
 }
 #hand-area .card.illegal {
-  opacity: 0.4;
+  opacity: 0.35;
+  transform: translateY(10px) scale(0.92);
   cursor: not-allowed;
 }
 #hand-area .card.illegal:hover {
-  transform: none !important;
+  transform: translateY(10px) scale(0.92) !important;
+}
+/* Legal plays pulled up and enlarged so they read as the actionable set, not just tinted */
+#hand-area .card.playable {
+  transform: translateY(-24px) scale(1.15);
+  z-index: 10;
+  box-shadow: 0 0 14px rgba(200,168,78,0.55);
 }
 #hand-area .card.playable:hover {
-  box-shadow: 0 0 18px rgba(200,168,78,0.8);
+  transform: translateY(-36px) scale(1.22) !important;
+  z-index: 100;
+  box-shadow: 0 0 24px rgba(200,168,78,0.95);
 }
 #hand-area .card.auto-play-glow {
   animation: autoGlow 1s ease-in-out infinite alternate;
@@ -600,6 +609,18 @@ body {
     <button onclick="startGame(5)">5 Players</button>
     <button onclick="startGame(6)">6 Players</button>
   </div>
+  <div style="margin-top:14px;display:flex;flex-direction:column;align-items:center;gap:8px">
+    <label style="font-size:15px;opacity:0.85;cursor:pointer">
+      <input type="checkbox" id="gemini-toggle" onchange="onGeminiToggle()"> 🤖 Add AI (Gemini) player
+    </label>
+    <input type="password" id="gemini-key" class="gemini-key-input" placeholder="Gemini API key" autocomplete="off"
+           style="display:none;width:240px;max-width:80vw;padding:8px;border-radius:6px;border:1px solid #678;background:#1b2733;color:#fff;font-size:13px">
+    <span id="gemini-hint" style="display:none;font-size:11px;opacity:0.5">Key stored locally in this browser only.</span>
+    <label style="font-size:15px;opacity:0.85;cursor:pointer">
+      <input type="checkbox" id="geometric-toggle" onchange="onScoringToggle()"> 📐 Geometric scoring
+    </label>
+    <span id="geometric-hint" style="display:none;font-size:11px;opacity:0.5">Made bid B = 5 + B(B+1)/2 · Miss by d = −d(d+1)/2</span>
+  </div>
   <div style="margin-top:10px">
     <a href="multiplayer.html" class="btn" style="background:#2a7a8a;color:#fff;text-decoration:none">🌐 Multiplayer (online)</a>
   </div>
@@ -863,12 +884,18 @@ RULES:
 - Players MUST follow the led suit if possible.
 - If you cannot follow suit, you MUST play trump if you have any.
 - Only if you have neither led suit nor trump can you play freely.
-- Scoring: exact bid = 5 + bid points. Miss = -|tricks_won - bid|. Bid 0 and make it = 5 points.
+- Scoring: ${G.scoringMode === 'geometric'
+    ? 'GEOMETRIC. Make your bid B = 5 + B(B+1)/2 points (bid 0 made = 5; 1=6; 2=8; 3=11; 4=15; 5=20). Miss by d tricks = -d(d+1)/2 (off by 1=-1; 2=-3; 3=-6; 4=-10). Bigger made bids pay far more, but big misses hurt far more — bid the most tricks you can reliably make.'
+    : 'exact bid = 5 + bid points. Miss = -|tricks_won - bid|. Bid 0 and make it = 5 points.'}
 
 GAME STATE:
 - Players: ${G.numPlayers} | Trump: ${trumpName} | Trump card: ${trumpCardText}
 - Cards per player this round: ${cpp}
 - You are bidder ${bidderPos} of ${G.numPlayers}
+- Round ${G.currentRoundIndex + 1} of ${G.roundSequence.length}
+
+MATCH STANDINGS (cumulative score):
+${G.scores.map((s,i) => `  - ${G.playerNames[i]}: ${s}`).join('\n')}
 
 BIDS SO FAR:
 ${alreadyBid}${forbiddenNote}
@@ -910,11 +937,32 @@ function buildGeminiPlayPrompt(playerIndex, legalMoves, ledSuit) {
     const w = G.tricksWon[i];
     const n = b - w;
     const state = n > 0 ? `needs ${n} more` : n === 0 ? 'DONE (will try to lose)' : `OVER (made ${w}, bid ${b})`;
-    return `  - ${G.playerNames[i]}: bid ${b}, won ${w} — ${state}`;
+    return `  - ${G.playerNames[i]}: bid ${b}, won ${w} — ${state} | match score ${G.scores[i]}`;
   }).filter(Boolean).join('\n');
 
-  const playedThisRound = G.playedCards.length > 0 ?
-    G.playedCards.map(cardToText).join(', ') : '(none yet)';
+  // Attributed trick-by-trick history for THIS round (who led, who played what, who won).
+  // Lets the model infer voids, who holds control, and each player's tendencies.
+  const trickHistoryText = (G.trickHistory && G.trickHistory.length) ?
+    G.trickHistory.map((t, ti) => {
+      const leader = G.playerNames[t.leaderIndex != null ? t.leaderIndex : t.entries[0].playerIndex];
+      const plays = t.entries.map(e => `${G.playerNames[e.playerIndex]} ${cardToText(e.card)}`).join(', ');
+      const winner = G.playerNames[t.winnerIndex];
+      return `  Trick ${ti+1} (led by ${leader}): ${plays} → won by ${winner}`;
+    }).join('\n') : '  (no completed tricks yet this round)';
+
+  // Voids observed this round: a player who failed to follow a led suit is void in it.
+  const voidNotes = [];
+  if (G.trickHistory) {
+    const voids = {};
+    for (const t of G.trickHistory) {
+      const ls = t.entries[0].card.suit;
+      for (const e of t.entries) {
+        if (e.card.suit !== ls) { (voids[e.playerIndex] = voids[e.playerIndex] || new Set()).add(ls); }
+      }
+    }
+    for (const pi in voids) voidNotes.push(`  - ${G.playerNames[pi]} is VOID in ${[...voids[pi]].map(s=>SUIT_NAMES[s]).join(', ')}`);
+  }
+  const voidText = voidNotes.length ? voidNotes.join('\n') : '  (none observed yet)';
 
   const legalList = legalMoves.map((c,i) => `  ${i+1}. ${cardToText(c)}`).join('\n');
 
@@ -935,8 +983,11 @@ ${playersStatus}
 
 YOU (${G.playerNames[playerIndex]}): bid ${bid}, won ${won} — ${need > 0 ? `need ${need} more trick${need>1?'s':''}` : need === 0 ? 'DONE, avoid winning' : 'OVER bid, minimize damage'}
 
-CARDS PLAYED THIS ROUND (for counting):
-${playedThisRound}
+TRICK HISTORY THIS ROUND (perfect memory — who led, who played what, who won):
+${trickHistoryText}
+
+VOIDS OBSERVED (a player who didn't follow the led suit has none of it left):
+${voidText}
 
 CURRENT TRICK (${posText} to play${isLast ? ' — LAST position, perfect information' : ''}):
 ${currentTrickText}${ledSuit ? `\n  Led suit: ${SUIT_NAMES[ledSuit]}` : ''}
@@ -952,7 +1003,10 @@ STRATEGIC GUIDANCE:
 - SACRIFICE: lose a trick deliberately to gain better position or force a favorable lead.
 - TRUMP MANAGEMENT: don't trump eagerly if you need trump for protection later.
 - DEFENSIVE: when bid is made, play lowest cards — extra tricks cost points.
-- COUNTING: if A♠ has been played, your K♠ is now the master. Check played cards above.
+- COUNTING: use TRICK HISTORY above. If A♠ is gone, your K♠ is the master.
+- VOIDS: exploit VOIDS OBSERVED — leading a suit an opponent is void in lets them ruff (if they hold trump) or discard; lead voids only when it helps you.
+- READING PLAYERS: trick history shows tendencies — who leads trumps, who ducks, who hoards honors. Use it.
+- STANDINGS: match score shows who leads the game. A trailing opponent who is DONE may still spoil; the leader is the one to set when you can.
 - POSITION: last to play = perfect information — use cheapest winner, dump safely.
 - OPPONENTS: DONE players dump low and aren't competing. Players needing tricks are threats.
 
@@ -1029,10 +1083,23 @@ async function geminiChooseCard(playerIndex, legalMoves, ledSuit) {
 let G = {};
 let autoPlayTimer = null;
 
+// Round scoring. Linear (classic): made = 5+bid, miss = -|diff|.
+// Geometric: made = 5 + bid(bid+1)/2, miss = -diff(diff+1)/2 (triangular both ways).
+// Reads the active mode off G so every call site (tally, PIMC bid-eval, card-eval, log) stays consistent.
+function scoreRound(taken, bid, mode) {
+  const m = mode || (G && G.scoringMode) || 'linear';
+  const tri = n => n * (n + 1) / 2;
+  if (m === 'geometric') {
+    return taken === bid ? 5 + tri(bid) : -tri(Math.abs(taken - bid));
+  }
+  return taken === bid ? 5 + bid : -Math.abs(taken - bid);
+}
+
 function initState(numPlayers) {
   const seq = computeRoundSequence(numPlayers);
   G = {
     numPlayers,
+    scoringMode: window._scoringMode || 'linear',
     playerNames: PLAYER_NAMES_MAP[numPlayers],
     roundSequence: seq,
     currentRoundIndex: 0,
@@ -1127,7 +1194,7 @@ function logRoundEnd() {
       bid: G.bids[i],
       won: G.tricksWon[i],
       made: G.tricksWon[i] === G.bids[i],
-      score: G.tricksWon[i] === G.bids[i] ? 5 + G.bids[i] : -Math.abs(G.tricksWon[i] - G.bids[i]),
+      score: scoreRound(G.tricksWon[i], G.bids[i]),
       cumulative: G.scores[i],
     };
   }
@@ -1242,8 +1309,50 @@ function cardHTML(card, extra = '') {
 }
 
 // ─── Game Flow ───
+function onGeminiToggle() {
+  const on = document.getElementById('gemini-toggle').checked;
+  const keyInput = document.getElementById('gemini-key');
+  const hint = document.getElementById('gemini-hint');
+  keyInput.style.display = on ? 'block' : 'none';
+  hint.style.display = on ? 'block' : 'none';
+  if (on) {
+    keyInput.value = keyInput.value || localStorage.getItem('wist-gemini-key') || '';
+    keyInput.focus();
+  }
+}
+
+// Read the Gemini toggle/key from the setup screen and set the flag for pickOpponents
+function applyGeminiSetting() {
+  const toggle = document.getElementById('gemini-toggle');
+  if (toggle && toggle.checked) {
+    const key = (document.getElementById('gemini-key').value || '').trim();
+    if (key) {
+      window._geminiApiKey = key;
+      localStorage.setItem('wist-gemini-key', key);
+      return;
+    }
+  }
+  // toggle off and no URL-provided key → no AI player
+  if (toggle && !toggle.checked) window._geminiApiKey = null;
+}
+
+function onScoringToggle() {
+  const on = document.getElementById('geometric-toggle').checked;
+  document.getElementById('geometric-hint').style.display = on ? 'block' : 'none';
+}
+
+// Read the geometric-scoring toggle and set the active mode for initState
+function applyScoringSetting() {
+  const toggle = document.getElementById('geometric-toggle');
+  const on = !!(toggle && toggle.checked);
+  window._scoringMode = on ? 'geometric' : 'linear';
+  localStorage.setItem('wist-scoring-mode', window._scoringMode);
+}
+
 function startGame(numPlayers) {
   ensureAudio();
+  applyGeminiSetting();
+  applyScoringSetting();
   // Randomize opponents each game
   const opponents = pickOpponents(numPlayers - 1);
   PLAYER_NAMES_MAP[numPlayers] = ['You', ...opponents];
@@ -1306,11 +1415,21 @@ function startRound() {
 }
 
 function sortHand(hand) {
-  const suitOrder = {spades:0, hearts:1, diamonds:2, clubs:3};
-  hand.sort((a, b) => {
-    if (a.suit !== b.suit) return suitOrder[a.suit] - suitOrder[b.suit];
-    return RANK_VALUE[b.rank] - RANK_VALUE[a.rank];
-  });
+  // Group by suit (ranks high→low within each), then order the suit groups so
+  // adjacent groups alternate color when possible — no red suit next to a red,
+  // no black next to a black. Interleave by color, leading with the larger pile
+  // so any unavoidable same-color leftover lands at the end.
+  const bySuit = {};
+  for (const c of hand) (bySuit[c.suit] || (bySuit[c.suit] = [])).push(c);
+  for (const s in bySuit) bySuit[s].sort((a, b) => RANK_VALUE[b.rank] - RANK_VALUE[a.rank]);
+  const blacks = ['spades', 'clubs'].filter(s => bySuit[s]);
+  const reds = ['hearts', 'diamonds'].filter(s => bySuit[s]);
+  let a = blacks, b = reds;
+  if (b.length > a.length) [a, b] = [b, a];
+  const order = [];
+  for (let i = 0; i < a.length; i++) { order.push(a[i]); if (i < b.length) order.push(b[i]); }
+  hand.length = 0;
+  for (const s of order) for (const c of bySuit[s]) hand.push(c);
 }
 
 // ─── Bidding ───
@@ -1809,12 +1928,12 @@ function simPlayOut(hands, bids, tricksWon, trumpSuit, leader, numPlayers, spite
 function simScore(playerIndex, tricksWon, bids) {
   const myBid = bids[playerIndex];
   const myWon = tricksWon[playerIndex];
-  let myScore = myWon === myBid ? 5 + myBid : -Math.abs(myWon - myBid);
+  let myScore = scoreRound(myWon, myBid);
 
   let bestOpp = -Infinity;
   for (let i = 0; i < bids.length; i++) {
     if (i === playerIndex || bids[i] === null) continue;
-    const oppScore = tricksWon[i] === bids[i] ? 5 + bids[i] : -Math.abs(tricksWon[i] - bids[i]);
+    const oppScore = scoreRound(tricksWon[i], bids[i]);
     bestOpp = Math.max(bestOpp, oppScore);
   }
 
@@ -2030,7 +2149,7 @@ function pimcBid(playerIndex, numSims) {
       );
 
       const myTricks = result[playerIndex];
-      const score = myTricks === bid ? 5 + bid : -Math.abs(myTricks - bid);
+      const score = scoreRound(myTricks, bid);
       scores[bid] += score;
     }
   }
@@ -2648,7 +2767,7 @@ function trickWinReason(entries, winnerIdx, trumpSuit) {
 
 function resolveTrick() {
   const winner = currentWinner();
-  G.lastTrick = {entries: [...G.currentTrick], winnerIndex: winner.playerIndex, reason: trickWinReason(G.currentTrick, winner.playerIndex, G.trumpSuit)};
+  G.lastTrick = {entries: [...G.currentTrick], leaderIndex: G.trickLeaderIndex, winnerIndex: winner.playerIndex, reason: trickWinReason(G.currentTrick, winner.playerIndex, G.trumpSuit)};
   G.trickHistory.push(G.lastTrick);
   G.tricksWon[winner.playerIndex]++;
   G.trickLeaderIndex = winner.playerIndex;
@@ -2676,7 +2795,7 @@ function endRound() {
   for (let p = 0; p < G.numPlayers; p++) {
     const bid = G.bids[p];
     const won = G.tricksWon[p];
-    roundScores.push(won === bid ? 5 + bid : -Math.abs(won - bid));
+    roundScores.push(scoreRound(won, bid));
     G.scores[p] += roundScores[p];
     // Track opponent bidding accuracy
     if (G.opponentStats[p]) {
@@ -3157,8 +3276,23 @@ window.addEventListener('DOMContentLoaded', () => {
   //   ?cards=6        — override to play only 6-card rounds
   //   ?players=4&cards=5  — 4 players, 5-card rounds only
   const params = new URLSearchParams(window.location.search);
+  // Restore / URL-override scoring mode (?scoring=geometric)
+  const urlScoring = params.get('scoring');
+  const savedScoring = urlScoring || localStorage.getItem('wist-scoring-mode');
+  if (savedScoring === 'geometric') {
+    window._scoringMode = 'geometric';
+    const gt = document.getElementById('geometric-toggle');
+    if (gt) { gt.checked = true; onScoringToggle(); }
+  }
   const geminiKey = params.get('gemini');
   if (geminiKey) window._geminiApiKey = geminiKey;
+  // Restore previously-used Gemini key into the setup toggle
+  const savedGeminiKey = geminiKey || localStorage.getItem('wist-gemini-key');
+  if (savedGeminiKey) {
+    const tg = document.getElementById('gemini-toggle');
+    const ki = document.getElementById('gemini-key');
+    if (tg && ki) { tg.checked = true; ki.value = savedGeminiKey; onGeminiToggle(); }
+  }
   const autoPlayers = parseInt(params.get('players'));
   const autoCards = parseInt(params.get('cards'));
   if (autoCards >= 1 && autoCards <= 8) {
