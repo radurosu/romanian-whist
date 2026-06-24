@@ -1,1 +1,12 @@
 .claude/
+
+# OS / editor / sync cruft
+.DS_Store
+.stfolder/
+
+# Python
+__pycache__/
+
+# Local logs / experiment output
+*.log
+CLAUDE.md
