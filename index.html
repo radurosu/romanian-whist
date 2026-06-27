@@ -680,12 +680,59 @@ function playTone(freq, duration, type = 'sine', vol = 0.15, detune = 0) {
   osc.stop(audioCtx.currentTime + duration);
 }
 
+// Short burst of filtered white noise — the texture real card sounds are made of
+// (a snap/flick is broadband noise, not a tone). filterType: 'highpass' for a
+// bright "fwip", 'bandpass' for a focused snap, 'lowpass' for a soft thud.
+function playNoise(duration, vol, filterType, filterFreq, q = 0.8) {
+  ensureAudio();
+  const sr = audioCtx.sampleRate;
+  const len = Math.max(1, Math.floor(sr * duration));
+  const buf = audioCtx.createBuffer(1, len, sr);
+  const data = buf.getChannelData(0);
+  for (let i = 0; i < len; i++) data[i] = Math.random() * 2 - 1;
+  const src = audioCtx.createBufferSource();
+  src.buffer = buf;
+  const filt = audioCtx.createBiquadFilter();
+  filt.type = filterType;
+  filt.frequency.value = filterFreq;
+  filt.Q.value = q;
+  const gain = audioCtx.createGain();
+  const t = audioCtx.currentTime;
+  gain.gain.setValueAtTime(vol, t);
+  gain.gain.exponentialRampToValueAtTime(0.0001, t + duration);
+  src.connect(filt); filt.connect(gain); gain.connect(audioCtx.destination);
+  src.start();
+  src.stop(t + duration);
+}
+
+// One card snapping onto the table: bright flick + soft low body
+function sfxCardFlick(vol = 1) {
+  playNoise(0.045, 0.30 * vol, 'highpass', 1900 + Math.random() * 700);
+  playNoise(0.035, 0.22 * vol, 'bandpass', 2700 + Math.random() * 900, 0.7);
+  setTimeout(() => playTone(140 + Math.random() * 40, 0.05, 'sine', 0.05 * vol), 6);
+}
 function sfxCardPlay() {
-  playTone(800 + Math.random() * 400, 0.08, 'triangle', 0.12);
+  sfxCardFlick(1);
+}
+
+// Dealing: a quick riffle of flicks, accelerating then settling — one per card,
+// clamped so big rounds don't drag.
+function sfxDeal(count = 8) {
+  const n = Math.min(Math.max(count, 5), 14);
+  let t = 0;
+  for (let i = 0; i < n; i++) {
+    const delay = t;
+    setTimeout(() => {
+      playNoise(0.03, 0.22, 'highpass', 2200 + Math.random() * 1000);
+      playNoise(0.025, 0.14, 'bandpass', 3100 + Math.random() * 1200, 0.6);
+    }, delay);
+    t += Math.max(34, 64 - i * 2) + Math.random() * 12; // gaps shrink → accelerando
+  }
 }
 function sfxBid() {
-  playTone(500, 0.06, 'square', 0.08);
-  setTimeout(() => playTone(700, 0.06, 'square', 0.08), 60);
+  // soft tap rather than a square beep
+  playNoise(0.025, 0.16, 'bandpass', 1500, 1.2);
+  playTone(440, 0.05, 'sine', 0.06);
 }
 function sfxTrickWin() {
   playTone(523, 0.1, 'sawtooth', 0.1);
@@ -1132,6 +1179,7 @@ function initGameLog() {
   G.gameLog = {
     timestamp: new Date().toISOString(),
     numPlayers: G.numPlayers,
+    scoringMode: G.scoringMode || 'linear',
     players: G.playerNames.slice(),
     rounds: [],
     _currentRound: null,
@@ -1394,6 +1442,7 @@ function startRound() {
     }
   }
   sortHand(G.hands[0]);
+  sfxDeal(cpp);
 
   const totalDealt = cpp * G.numPlayers;
   const deckSize = G.numPlayers * 8;
@@ -2202,7 +2251,13 @@ function computeAIBid(playerIndex) {
     const aggrMap = {void: 1.00,  tempo: 1.02,  sniper: 1.00,  precision: 0.98};
     const bias = biasMap[style] || 0;
     const aggr = aggrMap[style] || 1.0;
-    let bid = pimcBid(playerIndex, sims) + bias * Math.min(1, cpp / 4);
+    // Geometric scoring rewards aggression in big rounds (the tri(B) made-bonus
+    // dwarfs miss risk) and mild caution in small ones. Additive per-round-size
+    // schedule, tuned to maximize geo score/round (see proto_cppbias.mjs). No-op
+    // in linear mode.
+    const geoBias = G.scoringMode === 'geometric'
+      ? ({3:-0.2, 4:-0.2, 6:0.2, 7:0.6, 8:1.0}[cpp] || 0) : 0;
+    let bid = pimcBid(playerIndex, sims) + bias * Math.min(1, cpp / 4) + geoBias;
     bid = bidAwarenessAdj(bid) * aggr;
     bid = Math.max(0, Math.min(cpp, Math.round(bid)));
     bid = constrainBid(bid, bid, cpp);

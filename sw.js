@@ -1,4 +1,4 @@
-const CACHE = 'wist-v16';
+const CACHE = 'wist-v19';
 const ASSETS = ['./', './index.html', './multiplayer.html', './manifest.json'];
 
 self.addEventListener('install', event => {

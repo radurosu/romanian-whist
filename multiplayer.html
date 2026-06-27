@@ -1881,7 +1881,12 @@ function computeAIBid(playerIndex) {
     const aggrMap = {void: 1.00,  tempo: 1.02,  sniper: 1.00,  precision: 0.98};
     const bias = biasMap[style] || 0;
     const aggr = aggrMap[style] || 1.0;
-    let bid = pimcBid(playerIndex, sims) + bias * Math.min(1, cpp / 4);
+    // Geometric scoring: bid up in big rounds, mild caution in small ones (tuned
+    // to maximize geo score/round; see proto_cppbias.mjs). Inert until multiplayer
+    // carries a geometric scoringMode — G.scoringMode is undefined here today.
+    const geoBias = G.scoringMode === 'geometric'
+      ? ({3:-0.2, 4:-0.2, 6:0.2, 7:0.6, 8:1.0}[cpp] || 0) : 0;
+    let bid = pimcBid(playerIndex, sims) + bias * Math.min(1, cpp / 4) + geoBias;
     bid = bidAwarenessAdj(bid) * aggr;
     bid = Math.max(0, Math.min(cpp, Math.round(bid)));
     bid = constrainBid(bid, bid, cpp);
