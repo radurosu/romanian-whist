@@ -645,10 +645,12 @@ body {
 <button id="download-btn" style="display:none" onclick="downloadGameLogs()">Download Logs</button>
 
 <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-auth-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-database-compat.js"></script>
 <script>
 // ─── Firebase (for game log persistence) ───
-let fbDb = null;
+// DB rules require auth != null on gameLogs, so sign in anonymously up front.
+let fbDb = null, fbAuthReady = null;
 try {
   firebase.initializeApp({
     apiKey: "AIzaSyBHSb_-IbgjkcFWmdA2WkfuXg-Zl691khQ",
@@ -656,6 +658,8 @@ try {
     projectId: "rowhist26",
   });
   fbDb = firebase.database();
+  fbAuthReady = firebase.auth().signInAnonymously()
+    .catch(e => console.warn('Firebase anonymous auth failed, logs will be local only', e));
 } catch(e) { console.warn('Firebase init failed, logs will be local only', e); }
 
 // ─── Sound Engine (Web Audio API synth) ───
@@ -1268,10 +1272,13 @@ function logGameEnd() {
     while (logs.length > 50) logs.shift();
     localStorage.setItem('wist-game-logs', JSON.stringify(logs));
   } catch(e) {}
-  // Save to Firebase
+  // Save to Firebase (wait for anonymous auth — rules deny unauthenticated writes)
   if (fbDb) {
     const key = G.gameLog.timestamp.replace(/[:.]/g, '-');
-    try { fbDb.ref(`gameLogs/${key}`).set(G.gameLog); } catch(e) { console.warn('Firebase log save failed', e); }
+    const log = G.gameLog;
+    (fbAuthReady || Promise.resolve())
+      .then(() => fbDb.ref(`gameLogs/${key}`).set(log))
+      .catch(e => console.warn('Firebase log save failed', e));
   }
 }
 
@@ -1279,7 +1286,9 @@ function downloadGameLogs() {
   if (fbDb) {
     const btn = document.getElementById('download-btn');
     if (btn) btn.textContent = 'Loading...';
-    fbDb.ref('gameLogs').orderByChild('timestamp').once('value').then(snap => {
+    (fbAuthReady || Promise.resolve())
+      .then(() => fbDb.ref('gameLogs').orderByChild('timestamp').once('value'))
+      .then(snap => {
       const logs = [];
       snap.forEach(c => { const v = c.val(); if (v && v.timestamp) logs.push(v); });
       if (btn) btn.textContent = 'Download Logs';
