@@ -611,6 +611,10 @@ body {
   </div>
   <div style="margin-top:14px;display:flex;flex-direction:column;align-items:center;gap:8px">
     <label style="font-size:15px;opacity:0.85;cursor:pointer">
+      <input type="checkbox" id="grok-toggle" checked onchange="onGrokToggle()"> 🜲 Always seat Grok AI
+    </label>
+    <span id="grok-hint" style="font-size:11px;opacity:0.5">Calibrated PIMC + endgame search. One seat guaranteed when checked.</span>
+    <label style="font-size:15px;opacity:0.85;cursor:pointer">
       <input type="checkbox" id="gemini-toggle" onchange="onGeminiToggle()"> 🤖 Add AI (Gemini) player
     </label>
     <input type="password" id="gemini-key" class="gemini-key-input" placeholder="Gemini API key" autocomplete="off"
@@ -684,87 +688,133 @@ function playTone(freq, duration, type = 'sine', vol = 0.15, detune = 0) {
   osc.stop(audioCtx.currentTime + duration);
 }
 
-// Short burst of filtered white noise — the texture real card sounds are made of
-// (a snap/flick is broadband noise, not a tone). filterType: 'highpass' for a
-// bright "fwip", 'bandpass' for a focused snap, 'lowpass' for a soft thud.
-function playNoise(duration, vol, filterType, filterFreq, q = 0.8) {
+// Filtered noise — real card texture (broadband, not pure tones).
+// filterFreqEnd: optional sweep for air/swoosh (Hz at end of envelope).
+function playNoise(duration, vol, filterType, filterFreq, q = 0.8, filterFreqEnd = null) {
   ensureAudio();
   const sr = audioCtx.sampleRate;
   const len = Math.max(1, Math.floor(sr * duration));
   const buf = audioCtx.createBuffer(1, len, sr);
   const data = buf.getChannelData(0);
-  for (let i = 0; i < len; i++) data[i] = Math.random() * 2 - 1;
+  // Slightly pink-leaning noise (less harsh than pure white)
+  let last = 0;
+  for (let i = 0; i < len; i++) {
+    const white = Math.random() * 2 - 1;
+    last = (last + 0.02 * white) / 1.02;
+    data[i] = white * 0.55 + last * 0.45;
+  }
   const src = audioCtx.createBufferSource();
   src.buffer = buf;
   const filt = audioCtx.createBiquadFilter();
   filt.type = filterType;
-  filt.frequency.value = filterFreq;
   filt.Q.value = q;
-  const gain = audioCtx.createGain();
   const t = audioCtx.currentTime;
+  filt.frequency.setValueAtTime(filterFreq, t);
+  if (filterFreqEnd != null) {
+    filt.frequency.exponentialRampToValueAtTime(Math.max(40, filterFreqEnd), t + duration);
+  }
+  const gain = audioCtx.createGain();
   gain.gain.setValueAtTime(vol, t);
   gain.gain.exponentialRampToValueAtTime(0.0001, t + duration);
   src.connect(filt); filt.connect(gain); gain.connect(audioCtx.destination);
-  src.start();
+  src.start(t);
   src.stop(t + duration);
 }
 
-// One card snapping onto the table: bright flick + soft low body
-function sfxCardFlick(vol = 1) {
-  playNoise(0.045, 0.30 * vol, 'highpass', 1900 + Math.random() * 700);
-  playNoise(0.035, 0.22 * vol, 'bandpass', 2700 + Math.random() * 900, 0.7);
-  setTimeout(() => playTone(140 + Math.random() * 40, 0.05, 'sine', 0.05 * vol), 6);
+// Card in flight: air swoosh (noise filter falls) → paper snap → table body
+function sfxCardSwoosh(vol = 1) {
+  // Air: bright → dull over ~70ms
+  playNoise(0.07, 0.14 * vol, 'bandpass', 4200 + Math.random() * 800, 0.55, 900 + Math.random() * 300);
+  playNoise(0.055, 0.09 * vol, 'highpass', 2800, 0.5, 700);
 }
+
+function sfxCardSnap(vol = 1) {
+  playNoise(0.038, 0.28 * vol, 'highpass', 2000 + Math.random() * 600);
+  playNoise(0.028, 0.20 * vol, 'bandpass', 2800 + Math.random() * 800, 0.75);
+}
+
+function sfxCardTable(vol = 1) {
+  // Soft felt/wood thud
+  playNoise(0.05, 0.12 * vol, 'lowpass', 280 + Math.random() * 80, 0.6);
+  playTone(110 + Math.random() * 30, 0.06, 'sine', 0.04 * vol);
+}
+
+// One card played: swoosh → snap → table (variants for soft vs hard drop)
+function sfxCardFlick(vol = 1) {
+  const hard = Math.random() > 0.45;
+  const v = hard ? vol : vol * 0.82;
+  sfxCardSwoosh(v * (hard ? 1 : 0.85));
+  const snapAt = hard ? 28 : 38;
+  setTimeout(() => sfxCardSnap(v), snapAt);
+  setTimeout(() => sfxCardTable(v * (hard ? 1.05 : 0.9)), snapAt + (hard ? 8 : 12));
+}
+
 function sfxCardPlay() {
   sfxCardFlick(1);
 }
 
-// Dealing: a quick riffle of flicks, accelerating then settling — one per card,
-// clamped so big rounds don't drag.
+// Dealing: riffle of short flicks (no full swoosh — too heavy for a riffle)
 function sfxDeal(count = 8) {
   const n = Math.min(Math.max(count, 5), 14);
   let t = 0;
   for (let i = 0; i < n; i++) {
     const delay = t;
     setTimeout(() => {
-      playNoise(0.03, 0.22, 'highpass', 2200 + Math.random() * 1000);
-      playNoise(0.025, 0.14, 'bandpass', 3100 + Math.random() * 1200, 0.6);
+      playNoise(0.028, 0.18, 'highpass', 2300 + Math.random() * 900);
+      playNoise(0.022, 0.12, 'bandpass', 3000 + Math.random() * 1000, 0.6);
     }, delay);
-    t += Math.max(34, 64 - i * 2) + Math.random() * 12; // gaps shrink → accelerando
+    t += Math.max(34, 64 - i * 2) + Math.random() * 12;
   }
 }
 function sfxBid() {
-  // soft tap rather than a square beep
-  playNoise(0.025, 0.16, 'bandpass', 1500, 1.2);
-  playTone(440, 0.05, 'sine', 0.06);
+  playNoise(0.025, 0.14, 'bandpass', 1500, 1.2);
+  playTone(440, 0.05, 'sine', 0.05);
 }
+
+// Trick win: cards scraped together into a stack (not an arcade arpeggio)
 function sfxTrickWin() {
-  playTone(523, 0.1, 'sawtooth', 0.1);
-  setTimeout(() => playTone(659, 0.1, 'sawtooth', 0.1), 80);
-  setTimeout(() => playTone(784, 0.15, 'sawtooth', 0.12), 160);
+  // Soft gather whoosh
+  playNoise(0.09, 0.11, 'bandpass', 1800, 0.5, 500);
+  // Two quick paper scrapes as the pile is squared
+  setTimeout(() => {
+    playNoise(0.04, 0.16, 'highpass', 1600 + Math.random() * 400);
+    playNoise(0.035, 0.10, 'lowpass', 400, 0.7);
+  }, 45);
+  setTimeout(() => {
+    playNoise(0.035, 0.14, 'bandpass', 2200 + Math.random() * 500, 0.8);
+    playTone(160 + Math.random() * 20, 0.07, 'sine', 0.035);
+  }, 95);
+  // Final settle on table
+  setTimeout(() => {
+    playNoise(0.06, 0.10, 'lowpass', 220, 0.5);
+  }, 140);
 }
+
 function sfxRoundEnd() {
-  const notes = [523, 587, 659, 784, 880];
-  notes.forEach((n, i) => {
-    setTimeout(() => playTone(n, 0.12, 'triangle', 0.1, Math.random() * 20 - 10), i * 70);
-  });
+  // Longer rustle / settle, not a scale
+  playNoise(0.14, 0.10, 'bandpass', 1400, 0.45, 350);
+  setTimeout(() => playNoise(0.08, 0.12, 'highpass', 1800), 60);
+  setTimeout(() => playNoise(0.10, 0.09, 'lowpass', 300), 120);
+  setTimeout(() => playTone(330, 0.12, 'triangle', 0.05), 160);
 }
 function sfxGameOver() {
   const notes = [392, 523, 659, 784, 1047];
   notes.forEach((n, i) => {
     setTimeout(() => {
-      playTone(n, 0.25, 'sawtooth', 0.1);
-      playTone(n * 1.005, 0.25, 'sawtooth', 0.08);
+      playTone(n, 0.25, 'triangle', 0.08);
+      playTone(n * 1.005, 0.25, 'sine', 0.05);
     }, i * 120);
   });
 }
 function sfxForbidden() {
-  playTone(200, 0.15, 'square', 0.1);
-  setTimeout(() => playTone(150, 0.2, 'square', 0.1), 120);
+  // Soft muted slap
+  playNoise(0.05, 0.14, 'lowpass', 500, 0.8);
+  playTone(180, 0.1, 'sine', 0.06);
+  setTimeout(() => playTone(140, 0.12, 'sine', 0.05), 90);
 }
 function sfxAutoPlay() {
-  playTone(660, 0.06, 'sine', 0.1);
-  setTimeout(() => playTone(880, 0.1, 'sine', 0.12), 70);
+  // Quiet card play, not a ding
+  sfxCardFlick(0.45);
 }
 
 // ─── Constants ───
@@ -773,15 +823,45 @@ const SUITS = ['spades','hearts','diamonds','clubs'];
 const RANK_VALUE = {A:14,K:13,Q:12,J:11,'10':10,'9':9,'8':8,'7':7,'6':6,'5':5,'4':4,'3':3,'2':2};
 const SUIT_SYMBOL = {spades:'\u2660', hearts:'\u2665', diamonds:'\u2666', clubs:'\u2663'};
 const SUIT_COLOR = {spades:'black', hearts:'red', diamonds:'red', clubs:'black'};
-const ALL_OPPONENTS = ['Viktor','Sasha','Sniper','Katya','Tempo2'];
+const ALL_OPPONENTS = ['Grok','Viktor','Sasha','Sniper','Katya','Tempo2'];
+
+// Grok AI — calibrated vs frozen champs (test_grok.mjs). Optional always-seat.
+const GROK_CFG = {
+  bias: 0.0476,
+  aggr: 1.02,
+  noise: 0.06,
+  bidSims: 72,
+  playSims: 72,
+  cppBias: {1:0, 2:-0.001, 3:-0.017, 4:-0.022, 5:-0.032, 6:-0.020, 7:-0.050, 8:0.055},
+  endgameMaxCards: 2,
+  endgameSamples: 48,
+  spiteBonus: 2.0,
+};
 
 function pickOpponents(count) {
-  if (window._geminiApiKey) {
-    const others = ALL_OPPONENTS.slice().sort(() => Math.random() - 0.5);
-    return ['Gemini', ...others.slice(0, count - 1)];
+  const includeGrok = window._includeGrok !== false;
+  // When Grok is off, keep him out of the random pool entirely
+  let pool = ALL_OPPONENTS.filter(n => includeGrok || n !== 'Grok');
+  const forced = [];
+  if (window._geminiApiKey) forced.push('Gemini');
+  if (includeGrok) forced.push('Grok');
+  const rest = pool.filter(n => !forced.includes(n)).sort(() => Math.random() - 0.5);
+  const picks = [...forced, ...rest];
+  const seen = new Set();
+  const out = [];
+  for (const n of picks) {
+    if (seen.has(n)) continue;
+    seen.add(n);
+    out.push(n);
+    if (out.length >= count) break;
   }
-  const shuffled = ALL_OPPONENTS.slice().sort(() => Math.random() - 0.5);
-  return shuffled.slice(0, count);
+  while (out.length < count) {
+    const extra = rest.find(n => !seen.has(n));
+    if (!extra) break;
+    seen.add(extra);
+    out.push(extra);
+  }
+  return out;
 }
 
 // Will be set dynamically in startGame
@@ -842,9 +922,15 @@ const OPPONENT_AREAS = {
  *  TEMPO2 🔥 — "The Second Tempo" (for 6-player games)
  *    Same strategy as Sasha but slightly more noise.
  *
+ *  GROK 🜲 — Calibrated PIMC + true endgame (≤2 cards)
+ *    Bidding : PIMC with tuned bias/cppBias from self-play vs champs.
+ *    Play    : High-sim PIMC mid-hand; exact tree search endgame.
+ *    Eval    : ~+1.6 avg score / +3pp win share vs frozen champs (400 games).
+ *
  * ═══════════════════════════════════════════════════════════════════
  */
 const PLAYERS = {
+  'Grok':   { style: 'grok',      face: '🜲', noise: 0.06 },
   'Viktor': { style: 'void',      face: '🐉', noise: 0.10 },
   'Sasha':  { style: 'tempo',     face: '⚡', noise: 0.12 },
   'Sniper': { style: 'sniper',    face: '🎯', noise: 0.08 },
@@ -1366,6 +1452,24 @@ function cardHTML(card, extra = '') {
 }
 
 // ─── Game Flow ───
+function onGrokToggle() {
+  const on = document.getElementById('grok-toggle').checked;
+  window._includeGrok = on;
+  localStorage.setItem('wist-include-grok', on ? '1' : '0');
+  const hint = document.getElementById('grok-hint');
+  if (hint) hint.style.opacity = on ? '0.5' : '0.35';
+}
+
+function applyGrokSetting() {
+  const toggle = document.getElementById('grok-toggle');
+  if (toggle) {
+    window._includeGrok = !!toggle.checked;
+    localStorage.setItem('wist-include-grok', toggle.checked ? '1' : '0');
+  } else if (window._includeGrok === undefined) {
+    window._includeGrok = true; // default on
+  }
+}
+
 function onGeminiToggle() {
   const on = document.getElementById('gemini-toggle').checked;
   const keyInput = document.getElementById('gemini-key');
@@ -1408,6 +1512,7 @@ function applyScoringSetting() {
 
 function startGame(numPlayers) {
   ensureAudio();
+  applyGrokSetting();
   applyGeminiSetting();
   applyScoringSetting();
   // Randomize opponents each game
@@ -2071,9 +2176,120 @@ function sampleOpponentHands(myHand, playerIndex) {
   return oppHands;
 }
 
+// ─── Grok true endgame (≤2 cards): tree search under sampled worlds ───
+// Each player selfishly maximizes own scoreRound. Depth is n×≤2 tricks.
+function grokEndgameSearch(hands, bids, tw, trumpSuit, leader, numPlayers, trick, me, spite) {
+  const anyLeft = hands.some(h => h.length > 0);
+  if (!anyLeft && trick.length === 0) {
+    let sc = scoreRound(tw[me], bids[me] || 0);
+    if (spite !== undefined && tw[spite] !== (bids[spite] || 0)) sc += GROK_CFG.spiteBonus;
+    return { score: sc, tw };
+  }
+
+  if (trick.length === numPlayers) {
+    const ls = trick[0].card.suit;
+    let best = trick[0];
+    for (let i = 1; i < trick.length; i++) {
+      if (cardBeats(trick[i].card, best.card, ls)) best = trick[i];
+    }
+    const tw2 = tw.slice();
+    tw2[best.player]++;
+    return grokEndgameSearch(hands, bids, tw2, trumpSuit, best.player, numPlayers, [], me, spite);
+  }
+
+  const cur = trick.length === 0 ? leader : (trick[trick.length - 1].player + 1) % numPlayers;
+  if (!hands[cur] || hands[cur].length === 0) {
+    if (trick.length === 0) {
+      return grokEndgameSearch(hands, bids, tw, trumpSuit, (leader + 1) % numPlayers, numPlayers, [], me, spite);
+    }
+  }
+
+  const ls = trick.length > 0 ? trick[0].card.suit : null;
+  let legal = hands[cur] ? hands[cur].slice() : [];
+  if (ls) {
+    const follow = legal.filter(c => c.suit === ls);
+    if (follow.length > 0) legal = follow;
+    else if (trumpSuit) {
+      const trumps = legal.filter(c => c.suit === trumpSuit);
+      if (trumps.length > 0) legal = trumps;
+    }
+  }
+  if (!legal.length) {
+    return { score: scoreRound(tw[me], bids[me] || 0), tw };
+  }
+
+  let bestScore = -Infinity;
+  let bestTw = tw;
+  for (const card of legal) {
+    const h2 = hands.map(h => h.slice());
+    const idx = h2[cur].findIndex(c => c.rank === card.rank && c.suit === card.suit);
+    if (idx >= 0) h2[cur].splice(idx, 1);
+    const t2 = trick.concat([{ player: cur, card }]);
+    const res = grokEndgameSearch(h2, bids, tw, trumpSuit, leader, numPlayers, t2, me, spite);
+    const val = cur === me ? res.score : scoreRound(res.tw[cur], bids[cur] || 0);
+    if (val > bestScore) {
+      bestScore = val;
+      bestTw = res.tw;
+    }
+  }
+
+  let sc = scoreRound(bestTw[me], bids[me] || 0);
+  if (spite !== undefined && bestTw[spite] !== (bids[spite] || 0)) sc += GROK_CFG.spiteBonus;
+  return { score: sc, tw: bestTw };
+}
+
+function grokEndgameChooseCard(playerIndex, legalMoves) {
+  if (legalMoves.length === 1) return legalMoves[0];
+  const hand = G.hands[playerIndex];
+  const alreadyMade = G.tricksWon[playerIndex] >= (G.bids[playerIndex] || 0);
+  const spite = alreadyMade ? findSpiteTarget(playerIndex) : undefined;
+  const scores = {};
+  for (const c of legalMoves) scores[c.rank + c.suit] = 0;
+
+  for (let s = 0; s < GROK_CFG.endgameSamples; s++) {
+    const oppHands = sampleOpponentHands(hand, playerIndex);
+    for (const card of legalMoves) {
+      const allHands = [];
+      for (let i = 0; i < G.numPlayers; i++) {
+        if (i === playerIndex) {
+          allHands.push(hand.filter(c => !(c.rank === card.rank && c.suit === card.suit)));
+        } else {
+          allHands.push((oppHands[i] || []).slice());
+        }
+      }
+      // Normalize current trick to {player, card}
+      const trick = G.currentTrick.map(t => ({
+        player: t.playerIndex !== undefined ? t.playerIndex : t.player,
+        card: t.card
+      }));
+      trick.push({ player: playerIndex, card });
+      const res = grokEndgameSearch(
+        allHands, G.bids, G.tricksWon.slice(), G.trumpSuit,
+        G.trickLeaderIndex, G.numPlayers, trick, playerIndex, spite
+      );
+      scores[card.rank + card.suit] += res.score;
+    }
+  }
+
+  let bestCard = legalMoves[0], bestScore = -Infinity;
+  for (const c of legalMoves) {
+    if (scores[c.rank + c.suit] > bestScore) {
+      bestScore = scores[c.rank + c.suit];
+      bestCard = c;
+    }
+  }
+  return bestCard;
+}
+
 // PIMC: choose the best card to play via simulation
 function pimcChooseCard(playerIndex, legalMoves, numSims) {
   if (legalMoves.length === 1) return legalMoves[0];
+
+  // Grok endgame: true tree search instead of more PIMC
+  if (getStyle(playerIndex) === 'grok' &&
+      G.hands[playerIndex].length <= GROK_CFG.endgameMaxCards) {
+    return grokEndgameChooseCard(playerIndex, legalMoves);
+  }
 
   const hand = G.hands[playerIndex];
   const scores = {};
@@ -2082,6 +2298,7 @@ function pimcChooseCard(playerIndex, legalMoves, numSims) {
   // Spite: when already made, target the opponent closest to making their bid
   const alreadyMade = G.tricksWon[playerIndex] >= (G.bids[playerIndex] || 0);
   const spite = alreadyMade ? findSpiteTarget(playerIndex) : undefined;
+  const isGrok = getStyle(playerIndex) === 'grok';
 
   for (let sim = 0; sim < numSims; sim++) {
     const oppHands = sampleOpponentHands(hand, playerIndex);
@@ -2116,15 +2333,15 @@ function pimcChooseCard(playerIndex, legalMoves, numSims) {
         // Simulate remaining tricks
         const result = simPlayOut(allHands, G.bids, tw, G.trumpSuit, leader, G.numPlayers, spite);
         let sc = simScore(playerIndex, result, G.bids);
-        if (spite !== undefined && result[spite] !== G.bids[spite]) sc += 2.0;
+        if (spite !== undefined && result[spite] !== G.bids[spite]) sc += isGrok ? GROK_CFG.spiteBonus : 2.0;
         scores[card.rank + card.suit] += sc;
       } else {
         // Trick not complete — simulate remaining players in this trick, then rest
-        const nextPlayer = (playerIndex + 1) % G.numPlayers;
+        const nextP = (playerIndex + 1) % G.numPlayers;
 
         // Complete this trick with opponent plays
         let curTrick = trickSoFar.slice();
-        let cur = nextPlayer;
+        let cur = nextP;
         for (let p = curTrick.length; p < G.numPlayers; p++) {
           if (!allHands[cur] || allHands[cur].length === 0) { cur = (cur + 1) % G.numPlayers; continue; }
           const ls = curTrick[0].card.suit;
@@ -2135,11 +2352,33 @@ function pimcChooseCard(playerIndex, legalMoves, numSims) {
             const trumps = legal.filter(c => c.suit === G.trumpSuit);
             if (trumps.length > 0) legal = trumps;
           }
-          // Simple play
           const needMore = tw[cur] < (G.bids[cur] || 0);
-          const pick = needMore
-            ? legal.reduce((b, c) => RANK_VALUE[c.rank] > RANK_VALUE[b.rank] ? c : b)
-            : legal.reduce((b, c) => RANK_VALUE[c.rank] < RANK_VALUE[b.rank] ? c : b);
+          const isLast = curTrick.length === G.numPlayers - 1;
+          let pick;
+          if (isGrok) {
+            // Better mid-trick completion for Grok rollouts
+            const curB = curTrick.reduce((b, t) => cardBeats(t.card, b.card, ls) ? t : b);
+            const wins = legal.filter(c => cardBeats(c, curB.card, ls));
+            if (needMore) {
+              if (wins.length) {
+                const good = wins.filter(c => RANK_VALUE[c.rank] >= 10 || c.suit === G.trumpSuit);
+                pick = isLast
+                  ? wins.reduce((b, c) => RANK_VALUE[c.rank] < RANK_VALUE[b.rank] ? c : b)
+                  : (good.length
+                      ? good.reduce((b, c) => RANK_VALUE[c.rank] < RANK_VALUE[b.rank] ? c : b)
+                      : legal.reduce((b, c) => RANK_VALUE[c.rank] < RANK_VALUE[b.rank] ? c : b));
+              } else {
+                pick = legal.reduce((b, c) => RANK_VALUE[c.rank] < RANK_VALUE[b.rank] ? c : b);
+              }
+            } else {
+              const losers = legal.filter(c => !cardBeats(c, curB.card, ls));
+              pick = (losers.length ? losers : legal).reduce((b, c) => RANK_VALUE[c.rank] < RANK_VALUE[b.rank] ? c : b);
+            }
+          } else {
+            pick = needMore
+              ? legal.reduce((b, c) => RANK_VALUE[c.rank] > RANK_VALUE[b.rank] ? c : b)
+              : legal.reduce((b, c) => RANK_VALUE[c.rank] < RANK_VALUE[b.rank] ? c : b);
+          }
           allHands[cur] = allHands[cur].filter(c => !(c.rank === pick.rank && c.suit === pick.suit));
           curTrick.push({playerIndex: cur, card: pick});
           cur = (cur + 1) % G.numPlayers;
@@ -2157,7 +2396,7 @@ function pimcChooseCard(playerIndex, legalMoves, numSims) {
         // Simulate remaining tricks
         const result = simPlayOut(allHands, G.bids, tw, G.trumpSuit, leader, G.numPlayers, spite);
         let sc = simScore(playerIndex, result, G.bids);
-        if (spite !== undefined && result[spite] !== G.bids[spite]) sc += 2.0;
+        if (spite !== undefined && result[spite] !== G.bids[spite]) sc += isGrok ? GROK_CFG.spiteBonus : 2.0;
         scores[card.rank + card.suit] += sc;
       }
     }
@@ -2254,10 +2493,10 @@ function computeAIBid(playerIndex) {
   // Bias corrects for sim playout underestimating real trick-taking
   // Bias values tuned from game data: higher = more chronic underbidder
   // PIMC bidding — bias & aggr tuned from 50k-game optimization
-  if ((style === 'void' || style === 'tempo' || style === 'sniper' || style === 'precision') && cpp >= 2) {
-    const sims = style === 'tempo' ? 60 : 80;
-    const biasMap = {void: 0.229, tempo: 0.020, sniper: 0.070, precision: 0.165};
-    const aggrMap = {void: 1.00,  tempo: 1.02,  sniper: 1.00,  precision: 0.98};
+  if ((style === 'void' || style === 'tempo' || style === 'sniper' || style === 'precision' || style === 'grok') && cpp >= 2) {
+    const sims = style === 'grok' ? GROK_CFG.bidSims : (style === 'tempo' ? 60 : 80);
+    const biasMap = {void: 0.229, tempo: 0.020, sniper: 0.070, precision: 0.165, grok: GROK_CFG.bias};
+    const aggrMap = {void: 1.00,  tempo: 1.02,  sniper: 1.00,  precision: 0.98, grok: GROK_CFG.aggr};
     const bias = biasMap[style] || 0;
     const aggr = aggrMap[style] || 1.0;
     // Geometric scoring rewards aggression in big rounds (the tri(B) made-bonus
@@ -2266,7 +2505,8 @@ function computeAIBid(playerIndex) {
     // in linear mode.
     const geoBias = G.scoringMode === 'geometric'
       ? ({3:-0.2, 4:-0.2, 6:0.2, 7:0.6, 8:1.0}[cpp] || 0) : 0;
-    let bid = pimcBid(playerIndex, sims) + bias * Math.min(1, cpp / 4) + geoBias;
+    const cppBias = style === 'grok' ? (GROK_CFG.cppBias[cpp] || 0) : 0;
+    let bid = pimcBid(playerIndex, sims) + bias * Math.min(1, cpp / 4) + geoBias + cppBias;
     bid = bidAwarenessAdj(bid) * aggr;
     bid = Math.max(0, Math.min(cpp, Math.round(bid)));
     bid = constrainBid(bid, bid, cpp);
@@ -2506,9 +2746,9 @@ function chooseAICard(playerIndex, legalMoves, ledSuit) {
 
   const style = getStyle(playerIndex);
 
-  // PIMC play for all main AI styles
-  if (style === 'void' || style === 'tempo' || style === 'sniper' || style === 'precision') {
-    const sims = style === 'tempo' ? 40 : 80;
+  // PIMC play for all main AI styles (Grok: higher sims + endgame inside pimcChooseCard)
+  if (style === 'void' || style === 'tempo' || style === 'sniper' || style === 'precision' || style === 'grok') {
+    const sims = style === 'grok' ? GROK_CFG.playSims : (style === 'tempo' ? 40 : 80);
     return pimcChooseCard(playerIndex, legalMoves, sims);
   }
   const bid = G.bids[playerIndex];
@@ -3348,6 +3588,16 @@ window.addEventListener('DOMContentLoaded', () => {
     const gt = document.getElementById('geometric-toggle');
     if (gt) { gt.checked = true; onScoringToggle(); }
   }
+  // Grok seat preference (default on)
+  const urlGrok = params.get('grok');
+  const savedGrok = localStorage.getItem('wist-include-grok');
+  const includeGrok = urlGrok === '0' || urlGrok === 'off' ? false
+    : urlGrok === '1' || urlGrok === 'on' ? true
+    : savedGrok === null ? true : savedGrok === '1';
+  window._includeGrok = includeGrok;
+  const grokTg = document.getElementById('grok-toggle');
+  if (grokTg) { grokTg.checked = includeGrok; onGrokToggle(); }
+
   const geminiKey = params.get('gemini');
   if (geminiKey) window._geminiApiKey = geminiKey;
   // Restore previously-used Gemini key into the setup toggle

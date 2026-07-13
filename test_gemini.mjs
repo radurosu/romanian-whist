@@ -6,26 +6,46 @@ import { readFileSync } from 'fs';
 
 // ─── Config ───
 const argv = process.argv.slice(2);
-let LLM_KEY = null;
-let NUM_GAMES = 3;
-let NUM_PLAYERS = 4;
+let NUM_GAMES = 8;
+let CONCURRENCY = 4;
 for (let i = 0; i < argv.length; i++) {
-  if (argv[i] === '--key') LLM_KEY = argv[++i];
-  else if (argv[i] === '--games') NUM_GAMES = parseInt(argv[++i]);
-  else if (argv[i] === '--players') NUM_PLAYERS = parseInt(argv[++i]);
+  if (argv[i] === '--games') NUM_GAMES = parseInt(argv[++i]);
+  else if (argv[i] === '--concurrency') CONCURRENCY = parseInt(argv[++i]);
 }
-// Auto-load from secretary
-if (!LLM_KEY) {
+
+// Load keys from secretary
+function loadKey(name) {
   try {
     const env = readFileSync('../secretary/keys.env', 'utf8');
-    const m = env.match(/GROK_API_KEY=(.+)/);
-    if (m) LLM_KEY = m[1].trim();
-  } catch(e) {}
+    const m = env.match(new RegExp(`${name}=(.+)`));
+    return m ? m[1].trim() : null;
+  } catch(e) { return null; }
 }
-if (!LLM_KEY) { console.error('No Grok key found. Add GROK_API_KEY to ../secretary/keys.env'); process.exit(1); }
 
-const LLM_MODEL = 'grok-3-mini';
-const LLM_BASE_URL = 'https://api.x.ai/v1/chat/completions';
+// ─── LLM provider registry ───
+// Each provider: endpoint, model, auth, request/response shape, per-provider throttle.
+const PROVIDERS = {
+  grok: {
+    label: 'grok-3-mini',
+    key: loadKey('GROK_API_KEY'),
+    url: 'https://api.x.ai/v1/chat/completions',
+    model: 'grok-3-mini',
+    kind: 'openai',
+    minInterval: 400,   // ms between calls to THIS provider
+  },
+  claude: {
+    label: 'claude-haiku-4-5',
+    key: loadKey('CLAUDE_API_KEY'),
+    url: 'https://api.anthropic.com/v1/messages',
+    model: 'claude-haiku-4-5-20251001',
+    kind: 'anthropic',
+    minInterval: 250,
+  },
+};
+for (const [id, p] of Object.entries(PROVIDERS)) {
+  if (!p.key) { console.error(`Missing key for ${id} (expected in ../secretary/keys.env)`); process.exit(1); }
+  p._nextSlot = 0; // next allowed call-start time (ms epoch)
+}
 
 // ─── Constants ───
 const ALL_RANKS = ['A','K','Q','J','10','9','8','7','6','5','4','3','2'];
@@ -39,15 +59,24 @@ const PLAYERS = {
   'Sasha':  { style: 'tempo',     noise: 0.15 },
   'Sniper': { style: 'sniper',    noise: 0.12 },
   'Katya':  { style: 'precision', noise: 0.10 },
-  'Gemini': { style: 'gemini',    noise: 0 },
+  'Claude': { style: 'llm', provider: 'claude', noise: 0 },
+  'Grok':   { style: 'llm', provider: 'grok',   noise: 0 },
 };
 
-const TEAM = ['Gemini', 'Viktor', 'Sasha', 'Katya']; // Gemini always included
+const OPP_POOL = ['Viktor', 'Sasha', 'Sniper', 'Katya']; // PIMC bots
+const LLM_NAMES = ['Claude', 'Grok'];
+const ALL_NAMES = [...LLM_NAMES, ...OPP_POOL];
 
-// ─── Rate limiting ───
-let lastLLMCall = 0;
-const LLM_INTERVAL = 1000; // 1s between calls — Grok is generous
-const LLM_MAX_RETRIES = 3;
+// Build a random lineup: both LLMs sprinkled in among PIMC bots, random seats, 3-5 players.
+// np=3 → one random LLM + 2 bots; np>=4 → both LLMs + bots.
+function randomLineup() {
+  const np = 3 + Math.floor(Math.random() * 3); // 3,4,5
+  let llms;
+  if (np === 3) llms = shuffle(LLM_NAMES).slice(0, 1);
+  else llms = LLM_NAMES.slice();
+  const bots = shuffle(OPP_POOL).slice(0, np - llms.length);
+  return shuffle([...llms, ...bots]); // random seats
+}
 
 // ─── Utilities ───
 function shuffle(arr) {
@@ -361,42 +390,56 @@ function chooseAICard(G, playerIndex, legalMoves, ledSuit) {
   return pimcChooseCard(G, playerIndex, legalMoves, sims);
 }
 
-// ─── LLM API (Grok via OpenAI-compatible endpoint) ───
-async function callLLMAPI(prompt, retryCount = 0) {
+// ─── LLM API — multi-provider, per-provider serialized + throttled ───
+const llmStats = {}; // providerId → {calls, errors, retries}
+for (const id of Object.keys(PROVIDERS)) llmStats[id] = {calls: 0, errors: 0, retries: 0};
+
+// Space call STARTS by minInterval per provider, but allow requests to overlap
+// in-flight (don't block the next call on the prior response). This rate-limits
+// without serializing, so concurrent games actually run in parallel.
+async function callLLM(providerId, prompt) {
+  const p = PROVIDERS[providerId];
   const now = Date.now();
-  const wait = LLM_INTERVAL - (now - lastLLMCall);
-  if (wait > 0) await new Promise(r => setTimeout(r, wait));
-  lastLLMCall = Date.now();
+  const slot = Math.max(now, p._nextSlot || 0);
+  p._nextSlot = slot + p.minInterval;
+  const delay = slot - now;
+  if (delay > 0) await new Promise(r => setTimeout(r, delay));
+  return doLLMCall(providerId, prompt);
+}
+
+async function doLLMCall(providerId, prompt, retryCount = 0) {
+  const p = PROVIDERS[providerId];
+  llmStats[providerId].calls++;
   try {
-    const res = await fetch(LLM_BASE_URL, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${LLM_KEY}` },
-      signal: AbortSignal.timeout(20000),
-      body: JSON.stringify({
-        model: LLM_MODEL,
-        messages: [{ role: 'user', content: prompt }],
-        temperature: 0.3,
-        max_tokens: 150,
-      })
-    });
+    let headers, body;
+    if (p.kind === 'anthropic') {
+      headers = { 'Content-Type': 'application/json', 'x-api-key': p.key, 'anthropic-version': '2023-06-01' };
+      body = JSON.stringify({ model: p.model, max_tokens: 150, temperature: 0.3, messages: [{ role: 'user', content: prompt }] });
+    } else {
+      headers = { 'Content-Type': 'application/json', 'Authorization': `Bearer ${p.key}` };
+      body = JSON.stringify({ model: p.model, messages: [{ role: 'user', content: prompt }], temperature: 0.3, max_tokens: 150 });
+    }
+    const res = await fetch(p.url, { method: 'POST', headers, signal: AbortSignal.timeout(30000), body });
     const data = await res.json();
     if (data.error) {
       const msg = typeof data.error === 'string' ? data.error : (data.error.message || JSON.stringify(data.error));
-      // Rate limit: check for retry-after
       const retryMatch = msg.match(/retry.{0,20}(\d+(?:\.\d+)?)\s*s/i);
-      if ((res.status === 429 || retryMatch) && retryCount < LLM_MAX_RETRIES) {
-        const waitSec = retryMatch ? Math.ceil(parseFloat(retryMatch[1])) + 2 : 10;
-        process.stdout.write(`\n  [Grok rate limit: waiting ${waitSec}s, retry ${retryCount+1}/${LLM_MAX_RETRIES}...] `);
+      if ((res.status === 429 || retryMatch) && retryCount < 3) {
+        const waitSec = retryMatch ? Math.ceil(parseFloat(retryMatch[1])) + 2 : 8;
+        llmStats[providerId].retries++;
         await new Promise(r => setTimeout(r, waitSec * 1000));
-        lastLLMCall = 0;
-        return callLLMAPI(prompt, retryCount + 1);
+        return doLLMCall(providerId, prompt, retryCount + 1);
       }
-      console.warn('  Grok error (giving up):', msg.slice(0, 100));
+      llmStats[providerId].errors++;
       return null;
     }
-    return data.choices?.[0]?.message?.content?.trim() || null;
+    // anthropic: content[0].text ; openai: choices[0].message.content
+    const text = p.kind === 'anthropic'
+      ? data.content?.[0]?.text?.trim()
+      : data.choices?.[0]?.message?.content?.trim();
+    return text || null;
   } catch(e) {
-    console.warn('  Grok fetch error:', e.message);
+    llmStats[providerId].errors++;
     return null;
   }
 }
@@ -420,8 +463,11 @@ RULES: Follow suit → must trump if can't follow → free only if neither.
 Exact bid = 5 + bid pts. Miss = -|diff|. Bid 0 and make it = 5 pts.
 
 Trump: ${trumpName} | Trump card: ${trumpCardText}
-Cards this round: ${cpp} | Players: ${G.numPlayers}
+Cards this round: ${cpp} | Players: ${G.numPlayers} | Round ${G.currentRoundIndex+1} of ${G.roundSequence.length}
 You are bidder ${bidderPos} of ${G.numPlayers}${forbidNote}
+
+Match standings (cumulative score):
+${G.scores.map((s,i) => `  ${G.playerNames[i]}: ${s}`).join('\n')}
 
 Bids placed so far:
 ${alreadyBid}
@@ -458,10 +504,27 @@ function buildGeminiPlayPrompt(G, playerIndex, legalMoves, ledSuit) {
     const w = G.tricksWon[i];
     const nd = b - w;
     const st = nd > 0 ? `needs ${nd} more` : nd === 0 ? 'DONE (avoids tricks)' : 'OVER bid';
-    return `  ${n}: bid ${b}, won ${w} — ${st}`;
+    return `  ${n}: bid ${b}, won ${w} — ${st} | match score ${G.scores[i]}`;
   }).filter(Boolean).join('\n');
 
-  const played = G.playedCards.length > 0 ? G.playedCards.map(cardToText).join(', ') : 'none yet';
+  // Attributed trick-by-trick history this round (who led, who played what, who won)
+  const trickHist = (G.trickHistory && G.trickHistory.length)
+    ? G.trickHistory.map((t, ti) => {
+        const leader = G.playerNames[t.leaderIndex != null ? t.leaderIndex : t.entries[0].playerIndex];
+        const plays = t.entries.map(e => `${G.playerNames[e.playerIndex]} ${cardToText(e.card)}`).join(', ');
+        return `  Trick ${ti+1} (led by ${leader}): ${plays} → won by ${G.playerNames[t.winnerIndex]}`;
+      }).join('\n')
+    : '  (no completed tricks yet this round)';
+
+  // Voids derived from history: didn't follow led suit → void in it
+  const voidsMap = {};
+  for (const t of (G.trickHistory || [])) {
+    const ls = t.entries[0].card.suit;
+    for (const e of t.entries) if (e.card.suit !== ls) (voidsMap[e.playerIndex] = voidsMap[e.playerIndex] || new Set()).add(ls);
+  }
+  const voidNotes = Object.keys(voidsMap).map(pi => `  ${G.playerNames[pi]} VOID in ${[...voidsMap[pi]].map(s=>SUIT_NAMES[s]).join(', ')}`);
+  const voidText = voidNotes.length ? voidNotes.join('\n') : '  (none observed yet)';
+
   const legalList = legalMoves.map((c,i) => `  ${i+1}. ${cardToText(c)}`).join('\n');
   const posLabel = ['leading','2nd','3rd','4th','5th','6th'][trickPos] || `${trickPos+1}th`;
 
@@ -476,7 +539,11 @@ ${status}
 
 You (${G.playerNames[playerIndex]}): bid ${bid}, won ${won} — ${need > 0 ? `need ${need} more` : need === 0 ? 'DONE, avoid winning' : 'over bid, minimize damage'}
 
-Cards played this round: ${played}
+Trick history this round (perfect memory — who led, who played what, who won):
+${trickHist}
+
+Voids observed (player didn't follow led suit → none of it left):
+${voidText}
 
 Current trick (you are ${posLabel}${isLast ? ', LAST — perfect info' : ''}):
 ${trickText}${ledSuit ? `\n  Led suit: ${SUIT_NAMES[ledSuit]}` : ''}
@@ -490,7 +557,10 @@ Strategy:
 - FINESSING: holding A-Q, lead low toward Q — K to your left means Q wins.
 - SUIT ESTABLISHMENT: run long suits, small cards become winners when opponents exhaust.
 - DEFENSIVE: if DONE, play lowest cards — extra tricks cost points.
-- COUNTING: check played cards — if A♠ gone, your K♠ is master now.
+- COUNTING: use trick history — if A♠ gone, your K♠ is master now.
+- VOIDS: exploit voids observed — leading a suit an opponent is void in lets them ruff/discard; lead it only when it helps you.
+- READING: history shows tendencies — who leads trumps, who ducks, who hoards honors.
+- STANDINGS: match score shows the game leader — the one worth setting when you can.
 - LAST position: use cheapest winner or safest dump.
 - DONE players dump low, not competing. Players needing tricks are threats.
 
@@ -515,7 +585,7 @@ function parseGeminiCard(text, legalMoves) {
   return null;
 }
 
-async function geminiComputeBid(G, playerIndex) {
+async function llmComputeBid(G, playerIndex, provider) {
   const cpp = G.cardsPerPlayer;
   if (cpp <= 2) {
     if (cpp === 1) {
@@ -526,123 +596,103 @@ async function geminiComputeBid(G, playerIndex) {
     return constrainBid(G, bid, bid, cpp);
   }
   const prompt = buildGeminiBidPrompt(G, playerIndex);
-  const response = await callLLMAPI(prompt);
+  const response = await callLLM(provider, prompt);
   if (response) {
     const m = response.match(/\d+/);
     if (m) {
       const bid = parseInt(m[0]);
-      if (bid >= 0 && bid <= cpp) {
-        return constrainBid(G, bid, bid, cpp);
-      }
+      if (bid >= 0 && bid <= cpp) return constrainBid(G, bid, bid, cpp);
     }
   }
-  console.warn('  Grok bid fallback to PIMC');
-  const bid = pimcBid(G, playerIndex, 80);
+  const bid = pimcBid(G, playerIndex, 80); // fallback
   return constrainBid(G, bid, bid, cpp);
 }
 
-async function geminiChooseCard(G, playerIndex, legalMoves, ledSuit) {
+async function llmChooseCard(G, playerIndex, legalMoves, ledSuit, provider) {
   if (legalMoves.length === 1) return legalMoves[0];
   if (G.cardsPerPlayer <= 2) return pimcChooseCard(G, playerIndex, legalMoves, 80);
-  // Only call API when leading a trick — follow-suit decisions use PIMC
+  // Only call API when leading a trick — follow-suit decisions use PIMC (saves quota)
   if (ledSuit !== null) return pimcChooseCard(G, playerIndex, legalMoves, 80);
   const prompt = buildGeminiPlayPrompt(G, playerIndex, legalMoves, ledSuit);
-  const response = await callLLMAPI(prompt);
+  const response = await callLLM(provider, prompt);
   if (response) {
     const card = parseGeminiCard(response, legalMoves);
     if (card) return card;
-    console.warn(`  Grok card parse failed: "${response}"`);
   }
-  return pimcChooseCard(G, playerIndex, legalMoves, 80);
+  return pimcChooseCard(G, playerIndex, legalMoves, 80); // fallback
 }
 
-// ─── Game Runner ───
-async function playOneGame(gameNum) {
-  const names = TEAM.slice(0, NUM_PLAYERS);
-  const roundSeq = computeRoundSequence(NUM_PLAYERS);
+// ─── Game Runner (parallel-safe: no module globals mutated) ───
+async function playOneGame(gameNum, names) {
+  const np = names.length;
+  const roundSeq = computeRoundSequence(np);
   const G = {
-    numPlayers: NUM_PLAYERS,
+    numPlayers: np,
     playerNames: names,
     roundSequence: roundSeq,
     dealerIndex: 0,
-    scores: new Array(NUM_PLAYERS).fill(0),
+    scores: new Array(np).fill(0),
     currentRoundIndex: 0,
     playedCards: [],
     knownVoids: {},
+    trickHistory: [],
   };
-  for (let i = 0; i < NUM_PLAYERS; i++) G.knownVoids[i] = {};
+  for (let i = 0; i < np; i++) G.knownVoids[i] = {};
 
   const metrics = names.map(n => ({name: n, bids: 0, exact: 0, over: 0, under: 0}));
-  let geminiApiCalls = 0, geminiFallbacks = 0;
-
-  console.log(`\n═══ Game ${gameNum} — ${names.join(', ')} ═══`);
 
   for (let roundIndex = 0; roundIndex < roundSeq.length; roundIndex++) {
     G.currentRoundIndex = roundIndex;
     G.cardsPerPlayer = roundSeq[roundIndex];
-    G.bids = new Array(NUM_PLAYERS).fill(null);
+    G.bids = new Array(np).fill(null);
     G.biddingComplete = false;
     G.currentTrick = [];
-    G.tricksWon = new Array(NUM_PLAYERS).fill(0);
-    G.trickLeaderIndex = (G.dealerIndex + 1) % NUM_PLAYERS;
+    G.tricksWon = new Array(np).fill(0);
+    G.trickLeaderIndex = (G.dealerIndex + 1) % np;
     G.playedCards = [];
-    for (let i = 0; i < NUM_PLAYERS; i++) G.knownVoids[i] = {};
+    G.trickHistory = [];
+    for (let i = 0; i < np; i++) G.knownVoids[i] = {};
 
-    const deck = buildDeck(NUM_PLAYERS);
+    const deck = buildDeck(np);
     G.fullDeck = deck.slice();
-    G.hands = Array.from({length: NUM_PLAYERS}, () => []);
+    G.hands = Array.from({length: np}, () => []);
     const cpp = G.cardsPerPlayer;
-    for (let i = 0; i < cpp; i++) for (let p = 0; p < NUM_PLAYERS; p++) G.hands[p].push(deck[i*NUM_PLAYERS+p]);
+    for (let i = 0; i < cpp; i++) for (let p = 0; p < np; p++) G.hands[p].push(deck[i*np+p]);
 
-    const totalDealt = cpp * NUM_PLAYERS;
+    const totalDealt = cpp * np;
     G.trumpCard = totalDealt < deck.length ? deck[totalDealt] : null;
     G.trumpSuit = G.trumpCard ? G.trumpCard.suit : null;
 
     // Bidding
     const bidOrder = [];
-    let bidder = (G.dealerIndex + 1) % NUM_PLAYERS;
-    for (let i = 0; i < NUM_PLAYERS; i++) { bidOrder.push(bidder); bidder = (bidder+1)%NUM_PLAYERS; }
+    let bidder = (G.dealerIndex + 1) % np;
+    for (let i = 0; i < np; i++) { bidOrder.push(bidder); bidder = (bidder+1)%np; }
 
     for (const p of bidOrder) {
-      const name = names[p];
-      let bid;
-      if (name === 'Gemini') {
-        const prevCalls = geminiApiCalls;
-        bid = await geminiComputeBid(G, p);
-        // track if API was used (cpp > 2 and no fallback warning logged)
-        if (cpp > 2) geminiApiCalls++;
-      } else {
-        bid = computeAIBid(G, p);
-      }
-      G.bids[p] = bid;
+      const cfg = PLAYERS[names[p]] || {};
+      G.bids[p] = cfg.style === 'llm'
+        ? await llmComputeBid(G, p, cfg.provider)
+        : computeAIBid(G, p);
     }
 
     // Playing
-    G.trickLeaderIndex = (G.dealerIndex + 1) % NUM_PLAYERS;
+    G.trickLeaderIndex = (G.dealerIndex + 1) % np;
     for (let trick = 0; trick < cpp; trick++) {
       G.currentTrick = [];
-      const ledSuit = null;
       let cur = G.trickLeaderIndex;
-      let actualLedSuit = null;
+      const trickLeader = G.trickLeaderIndex;
 
-      for (let p = 0; p < NUM_PLAYERS; p++) {
-        const pi = (cur + p) % NUM_PLAYERS;
+      for (let p = 0; p < np; p++) {
+        const pi = (cur + p) % np;
         const ls = G.currentTrick.length > 0 ? G.currentTrick[0].card.suit : null;
-        if (p === 0) actualLedSuit = null;
         const legal = getLegalMoves(G.hands[pi], ls, G.trumpSuit);
-        let card;
-        const name = names[pi];
-        if (name === 'Gemini') {
-          card = await geminiChooseCard(G, pi, legal, ls);
-          if (cpp > 2) geminiApiCalls++;
-        } else {
-          card = chooseAICard(G, pi, legal, ls);
-        }
+        const cfg = PLAYERS[names[pi]] || {};
+        const card = cfg.style === 'llm'
+          ? await llmChooseCard(G, pi, legal, ls, cfg.provider)
+          : chooseAICard(G, pi, legal, ls);
         G.hands[pi] = G.hands[pi].filter(c => !(c.rank===card.rank && c.suit===card.suit));
         G.currentTrick.push({playerIndex: pi, card});
         G.playedCards.push(card);
-
-        // Void tracking
         if (ls && card.suit !== ls) G.knownVoids[pi][ls] = true;
       }
 
@@ -653,62 +703,57 @@ async function playOneGame(gameNum) {
         if (cardBeats(G.currentTrick[i].card, best.card, ls2, G.trumpSuit)) best = G.currentTrick[i];
       }
       G.tricksWon[best.playerIndex]++;
+      G.trickHistory.push({entries: G.currentTrick.map(e => ({...e})), leaderIndex: trickLeader, winnerIndex: best.playerIndex});
       G.trickLeaderIndex = best.playerIndex;
     }
 
     // Score round
-    const roundScores = [];
-    for (let p = 0; p < NUM_PLAYERS; p++) {
+    for (let p = 0; p < np; p++) {
       const bid = G.bids[p], won = G.tricksWon[p];
-      const sc = won === bid ? 5 + bid : -Math.abs(won - bid);
-      roundScores.push(sc);
-      G.scores[p] += sc;
+      G.scores[p] += won === bid ? 5 + bid : -Math.abs(won - bid);
       metrics[p].bids++;
       const diff = won - bid;
       if (diff === 0) metrics[p].exact++;
       else if (diff > 0) metrics[p].under++;
       else metrics[p].over++;
     }
-
-    // Print round summary
-    const parts = names.map((n,i) => `${n}:${G.bids[i]}/${G.tricksWon[i]}${roundScores[i]>=0?'+':''}${roundScores[i]}`);
-    const ts = G.trumpSuit ? G.trumpSuit.slice(0,3) : 'NT';
-    process.stdout.write(`  R${String(roundIndex+1).padStart(2)} [${cpp}c ${ts}] ${parts.join('  ')}\n`);
-
-    G.dealerIndex = (G.dealerIndex + 1) % NUM_PLAYERS;
+    G.dealerIndex = (G.dealerIndex + 1) % np;
   }
 
-  console.log(`\n  ─── Results ───`);
-  const sorted = names.map((n,i) => ({name: n, score: G.scores[i], ...metrics[i]})).sort((a,b) => b.score - a.score);
-  for (const p of sorted) {
-    const pct = (p.exact/p.bids*100).toFixed(0);
-    console.log(`  ${p.name.padEnd(8)} score=${String(p.score).padStart(3)}  exact=${p.exact}/${p.bids} (${pct}%)  over=${p.over}  under=${p.under}`);
-  }
-  console.log(`  Winner: ${sorted[0].name} (${sorted[0].score})`);
-  console.log(`  Grok API calls this game: ${geminiApiCalls}`);
-
+  const winner = names[G.scores.indexOf(Math.max(...G.scores))];
+  process.stdout.write(`  ✓ Game ${String(gameNum).padStart(2)} (${np}p: ${names.join(',')}) — winner ${winner} (${Math.max(...G.scores)})\n`);
   return {names, scores: G.scores.slice(), metrics};
 }
 
 // ─── Main ───
 async function main() {
-  console.log(`\nRunning ${NUM_GAMES} game(s) with ${NUM_PLAYERS} players: ${TEAM.slice(0,NUM_PLAYERS).join(', ')}`);
-  console.log(`Model: ${LLM_MODEL} | Rate limit: ${LLM_INTERVAL/1000}s between calls\n`);
+  console.log(`\nRunning ${NUM_GAMES} game(s), ${CONCURRENCY} concurrent — random 3-5 player lineups`);
+  console.log(`LLMs: ${LLM_NAMES.map(n => `${n}=${PROVIDERS[PLAYERS[n].provider].label}`).join(', ')}  vs PIMC bots: ${OPP_POOL.join(', ')}\n`);
+  const t0 = Date.now();
 
-  const allResults = [];
-  for (let g = 1; g <= NUM_GAMES; g++) {
-    const result = await playOneGame(g);
-    allResults.push(result);
+  // Run games with a concurrency cap
+  const lineups = Array.from({length: NUM_GAMES}, () => randomLineup());
+  const allResults = new Array(NUM_GAMES);
+  let next = 0;
+  async function worker() {
+    while (true) {
+      const g = next++;
+      if (g >= NUM_GAMES) break;
+      allResults[g] = await playOneGame(g + 1, lineups[g]);
+    }
   }
+  await Promise.all(Array.from({length: Math.min(CONCURRENCY, NUM_GAMES)}, worker));
+  const elapsed = ((Date.now() - t0)/1000).toFixed(0);
 
-  if (NUM_GAMES > 1) {
+  {
     console.log('\n═══ Overall Summary ═══');
     const totals = {};
-    TEAM.slice(0, NUM_PLAYERS).forEach(n => totals[n] = {wins:0, totalScore:0, totalExact:0, totalBids:0, totalOver:0, totalUnder:0});
+    ALL_NAMES.forEach(n => totals[n] = {wins:0, games:0, totalScore:0, totalExact:0, totalBids:0, totalOver:0, totalUnder:0});
     for (const r of allResults) {
       const winner = r.names[r.scores.indexOf(Math.max(...r.scores))];
       totals[winner].wins++;
       r.names.forEach((n,i) => {
+        totals[n].games++;
         totals[n].totalScore += r.scores[i];
         totals[n].totalExact += r.metrics[i].exact;
         totals[n].totalBids += r.metrics[i].bids;
@@ -716,12 +761,22 @@ async function main() {
         totals[n].totalUnder += r.metrics[i].under;
       });
     }
-    console.log(`${'Player'.padEnd(8)} Wins  AvgScore  BidAcc%  Over  Under`);
-    Object.entries(totals).sort((a,b) => b[1].wins - a[1].wins || b[1].totalScore - a[1].totalScore).forEach(([n,t]) => {
-      const pct = (t.totalExact/t.totalBids*100).toFixed(0);
-      const avg = (t.totalScore/NUM_GAMES).toFixed(1);
-      console.log(`${n.padEnd(8)} ${String(t.wins).padStart(4)}  ${String(avg).padStart(8)}  ${String(pct).padStart(7)}  ${String(t.totalOver).padStart(4)}  ${t.totalUnder}`);
-    });
+    console.log(`${'Player'.padEnd(8)} Games  Wins  Win%  AvgScore  BidAcc%  Over  Under`);
+    Object.entries(totals)
+      .sort((a,b) => (b[1].totalScore/Math.max(1,b[1].games)) - (a[1].totalScore/Math.max(1,a[1].games)))
+      .forEach(([n,t]) => {
+        if (t.games === 0) return;
+        const pct = (t.totalExact/Math.max(1,t.totalBids)*100).toFixed(0);
+        const avg = (t.totalScore/t.games).toFixed(1);
+        const winPct = (t.wins/t.games*100).toFixed(0);
+        console.log(`${n.padEnd(8)} ${String(t.games).padStart(5)}  ${String(t.wins).padStart(4)}  ${String(winPct).padStart(3)}%  ${String(avg).padStart(8)}  ${String(pct).padStart(7)}  ${String(t.totalOver).padStart(4)}  ${t.totalUnder}`);
+      });
+
+    console.log('\n─── LLM API usage ───');
+    for (const [id, s] of Object.entries(llmStats)) {
+      console.log(`  ${PROVIDERS[id].label.padEnd(20)} calls=${s.calls}  errors=${s.errors}  retries=${s.retries}`);
+    }
+    console.log(`\nElapsed: ${elapsed}s for ${NUM_GAMES} games (${CONCURRENCY} concurrent)`);
   }
 }
 
