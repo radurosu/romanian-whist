@@ -611,9 +611,13 @@ body {
   </div>
   <div style="margin-top:14px;display:flex;flex-direction:column;align-items:center;gap:8px">
     <label style="font-size:15px;opacity:0.85;cursor:pointer">
-      <input type="checkbox" id="grok-toggle" checked onchange="onGrokToggle()"> 🜲 Always seat Grok AI
+      <input type="checkbox" id="codex-toggle" checked onchange="onCodexToggle()"> ⌘ Add Codex when a seat is available
     </label>
-    <span id="grok-hint" style="font-size:11px;opacity:0.5">Calibrated PIMC + endgame search. One seat guaranteed when checked.</span>
+    <span id="codex-hint" style="font-size:11px;opacity:0.5">Bid-conditioned Monte Carlo player, tournament tuned.</span>
+    <label style="font-size:15px;opacity:0.85;cursor:pointer">
+      <input type="checkbox" id="grok-toggle" checked onchange="onGrokToggle()"> 🜲 Add Grok when a seat is available
+    </label>
+    <span id="grok-hint" style="font-size:11px;opacity:0.5">Calibrated PIMC + endgame search.</span>
     <label style="font-size:15px;opacity:0.85;cursor:pointer">
       <input type="checkbox" id="gemini-toggle" onchange="onGeminiToggle()"> 🤖 Add AI (Gemini) player
     </label>
@@ -823,7 +827,24 @@ const SUITS = ['spades','hearts','diamonds','clubs'];
 const RANK_VALUE = {A:14,K:13,Q:12,J:11,'10':10,'9':9,'8':8,'7':7,'6':6,'5':5,'4':4,'3':3,'2':2};
 const SUIT_SYMBOL = {spades:'\u2660', hearts:'\u2665', diamonds:'\u2666', clubs:'\u2663'};
 const SUIT_COLOR = {spades:'black', hearts:'red', diamonds:'red', clubs:'black'};
-const ALL_OPPONENTS = ['Grok','Viktor','Sasha','Sniper','Katya','Tempo2'];
+const ALL_OPPONENTS = ['Codex','Grok','Viktor','Sasha','Sniper','Katya','Tempo2'];
+
+// Codex AI — tuned in test_codex.mjs against the frozen champion field.
+const CODEX_CFG = {
+  oneCardSims: 512,
+  oneCardThreshold: 0.44,
+  bidSims: 72,
+  playSims: 72,
+  posteriorSigma: 1.2,
+  matchWeight: 0.25,
+  spiteBonus: 2.0,
+  strengthScale: {
+    3:{1:1.06,2:0.86,3:0.92,4:1.00,5:1.09,6:1.17,7:1.13,8:1.30},
+    4:{1:0.80,2:0.88,3:0.89,4:1.03,5:1.10,6:1.16,7:1.19,8:1.50},
+    5:{1:0.78,2:0.91,3:0.87,4:1.07,5:1.11,6:1.16,7:1.21,8:1.64},
+    6:{1:0.79,2:0.88,3:0.85,4:1.07,5:1.14,6:1.24,7:1.28,8:2.01},
+  },
+};
 
 // Grok AI — calibrated vs frozen champs (test_grok.mjs). Optional always-seat.
 const GROK_CFG = {
@@ -839,10 +860,13 @@ const GROK_CFG = {
 };
 
 function pickOpponents(count) {
+  const includeCodex = window._includeCodex !== false;
   const includeGrok = window._includeGrok !== false;
-  // When Grok is off, keep him out of the random pool entirely
-  let pool = ALL_OPPONENTS.filter(n => includeGrok || n !== 'Grok');
+  const pool = ALL_OPPONENTS.filter(n =>
+    (includeCodex || n !== 'Codex') && (includeGrok || n !== 'Grok')
+  );
   const forced = [];
+  if (includeCodex) forced.push('Codex');
   if (window._geminiApiKey) forced.push('Gemini');
   if (includeGrok) forced.push('Grok');
   const rest = pool.filter(n => !forced.includes(n)).sort(() => Math.random() - 0.5);
@@ -927,9 +951,15 @@ const OPPONENT_AREAS = {
  *    Play    : High-sim PIMC mid-hand; exact tree search endgame.
  *    Eval    : ~+1.6 avg score / +3pp win share vs frozen champs (400 games).
  *
+ *  CODEX ⌘ — Bid-conditioned imperfect-information search
+ *    Bidding : Position-aware one-card solver; importance-weighted PIMC.
+ *    Play    : Constrained hidden-hand worlds plus late-match pressure.
+ *    Eval    : 84.14 avg / 28.0% wins vs Grok's 82.64 / 21.2% (300 games).
+ *
  * ═══════════════════════════════════════════════════════════════════
  */
 const PLAYERS = {
+  'Codex':  { style: 'codex',     face: '⌘', noise: 0 },
   'Grok':   { style: 'grok',      face: '🜲', noise: 0.06 },
   'Viktor': { style: 'void',      face: '🐉', noise: 0.10 },
   'Sasha':  { style: 'tempo',     face: '⚡', noise: 0.12 },
@@ -1452,6 +1482,24 @@ function cardHTML(card, extra = '') {
 }
 
 // ─── Game Flow ───
+function onCodexToggle() {
+  const on = document.getElementById('codex-toggle').checked;
+  window._includeCodex = on;
+  localStorage.setItem('wist-include-codex', on ? '1' : '0');
+  const hint = document.getElementById('codex-hint');
+  if (hint) hint.style.opacity = on ? '0.5' : '0.35';
+}
+
+function applyCodexSetting() {
+  const toggle = document.getElementById('codex-toggle');
+  if (toggle) {
+    window._includeCodex = !!toggle.checked;
+    localStorage.setItem('wist-include-codex', toggle.checked ? '1' : '0');
+  } else if (window._includeCodex === undefined) {
+    window._includeCodex = true;
+  }
+}
+
 function onGrokToggle() {
   const on = document.getElementById('grok-toggle').checked;
   window._includeGrok = on;
@@ -1512,6 +1560,7 @@ function applyScoringSetting() {
 
 function startGame(numPlayers) {
   ensureAudio();
+  applyCodexSetting();
   applyGrokSetting();
   applyGeminiSetting();
   applyScoringSetting();
@@ -2176,6 +2225,133 @@ function sampleOpponentHands(myHand, playerIndex) {
   return oppHands;
 }
 
+// Codex samples legal hidden hands uniformly, then weights each world by how
+// well its remaining strength explains the bids already seen.
+function codexEstimateHandTricks(hand) {
+  let estimate = 0;
+  const trumpCount = G.trumpSuit ? hand.filter(c => c.suit === G.trumpSuit).length : 0;
+  for (const suit of SUITS) {
+    const cards = hand.filter(c => c.suit === suit);
+    if (!cards.length) continue;
+    const ranks = new Set(cards.map(c => c.rank));
+    const isTrump = suit === G.trumpSuit;
+    for (const card of cards) {
+      if (isTrump) estimate += ({A:0.96,K:0.82,Q:0.64,J:0.48,'10':0.34,'9':0.23}[card.rank] || 0.13);
+      else if (card.rank === 'A') estimate += G.trumpSuit ? 0.82 : 0.93;
+      else if (card.rank === 'K') estimate += (ranks.has('A') ? 0.55 : 0.34) * (G.trumpSuit ? 0.82 : 1);
+      else if (card.rank === 'Q') estimate += (ranks.has('A') || ranks.has('K') ? 0.28 : 0.10) * (G.trumpSuit ? 0.82 : 1);
+      else if (card.rank === 'J') estimate += (ranks.has('A') && ranks.has('K') ? 0.14 : 0.04) * (G.trumpSuit ? 0.82 : 1);
+    }
+    if (isTrump && cards.length > 1) estimate += 0.08 * (cards.length - 1);
+  }
+  if (G.trumpSuit && trumpCount) {
+    for (const suit of SUITS) {
+      if (suit === G.trumpSuit) continue;
+      const len = hand.filter(c => c.suit === suit).length;
+      if (len === 0) estimate += 0.24 * Math.min(trumpCount, 2);
+      else if (len === 1 && hand.length >= 3) estimate += 0.08;
+    }
+  }
+  const comp = Math.max(0.62, 1 - (G.numPlayers - 2) * 0.08);
+  const scale = CODEX_CFG.strengthScale[G.numPlayers]?.[G.cardsPerPlayer] || 1;
+  return estimate * comp * scale;
+}
+
+function codexSampleOpponentHands(myHand, playerIndex) {
+  const remaining = getCardsStillOut(myHand);
+  for (let i = remaining.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [remaining[i], remaining[j]] = [remaining[j], remaining[i]];
+  }
+  const opponents = [];
+  for (let i = 0; i < G.numPlayers; i++) {
+    if (i === playerIndex) continue;
+    const voidCount = Object.values(G.knownVoids[i] || {}).filter(Boolean).length;
+    opponents.push({idx:i, need:G.hands[i].length, voidCount, hand:[]});
+  }
+  opponents.sort((a,b) => b.voidCount - a.voidCount || Math.random() - 0.5);
+  for (const opponent of opponents) {
+    for (let slot = 0; slot < opponent.need; slot++) {
+      const allowed = [];
+      for (let i = 0; i < remaining.length; i++) {
+        if (!G.knownVoids[opponent.idx]?.[remaining[i].suit]) allowed.push(i);
+      }
+      if (!allowed.length) return sampleOpponentHands(myHand, playerIndex);
+      const pick = allowed[Math.floor(Math.random() * allowed.length)];
+      opponent.hand.push(remaining[pick]);
+      remaining.splice(pick, 1);
+    }
+  }
+  const hands = {};
+  for (const opponent of opponents) hands[opponent.idx] = opponent.hand;
+  return hands;
+}
+
+function codexSampleWorld(myHand, playerIndex) {
+  const hands = codexSampleOpponentHands(myHand, playerIndex);
+  let logWeight = 0;
+  for (let i = 0; i < G.numPlayers; i++) {
+    if (i === playerIndex || G.bids[i] === null) continue;
+    const expected = (G.tricksWon[i] || 0) + codexEstimateHandTricks(hands[i] || []);
+    const sigma = CODEX_CFG.posteriorSigma * (i === G.dealerIndex ? 1.35 : 1);
+    const diff = expected - G.bids[i];
+    logWeight -= diff * diff / (2 * sigma * sigma);
+  }
+  return {hands, weight:Math.exp(Math.max(-9, logWeight))};
+}
+
+function codexSimScore(playerIndex, tricksWon, bids) {
+  const myRound = scoreRound(tricksWon[playerIndex], bids[playerIndex] || 0);
+  const progress = G.roundSequence.length > 1
+    ? G.currentRoundIndex / (G.roundSequence.length - 1) : 0;
+  const pressure = CODEX_CFG.matchWeight * progress * progress;
+  const myTotal = G.scores[playerIndex] + myRound;
+  let bestOpponent = -Infinity;
+  for (let i = 0; i < G.numPlayers; i++) {
+    if (i === playerIndex) continue;
+    bestOpponent = Math.max(bestOpponent, G.scores[i] + scoreRound(tricksWon[i], bids[i] || 0));
+  }
+  return myRound + pressure * (myTotal - bestOpponent);
+}
+
+function codexOneCardWinProb(playerIndex) {
+  const myCard = G.hands[playerIndex][0];
+  const pool = getCardsStillOut(G.hands[playerIndex]);
+  const leader = (G.dealerIndex + 1) % G.numPlayers;
+  let weightedWins = 0, totalWeight = 0;
+  for (let sim = 0; sim < CODEX_CFG.oneCardSims; sim++) {
+    const cards = pool.slice();
+    for (let i = 0; i < G.numPlayers - 1; i++) {
+      const j = i + Math.floor(Math.random() * (cards.length - i));
+      [cards[i], cards[j]] = [cards[j], cards[i]];
+    }
+    const trick = [], seatCards = new Array(G.numPlayers);
+    let oi = 0;
+    for (let offset = 0; offset < G.numPlayers; offset++) {
+      const player = (leader + offset) % G.numPlayers;
+      const card = player === playerIndex ? myCard : cards[oi++];
+      seatCards[player] = card;
+      trick.push({playerIndex:player, card});
+    }
+    const ledSuit = trick[0].card.suit;
+    let best = trick[0];
+    for (let i = 1; i < trick.length; i++) if (cardBeats(trick[i].card, best.card, ledSuit)) best = trick[i];
+    let weight = 1;
+    for (let player = 0; player < G.numPlayers; player++) {
+      if (player === playerIndex || G.bids[player] === null) continue;
+      const profile = PLAYERS[G.playerNames[player]];
+      if (!profile || profile.style === 'gemini' || profile.style === 'codex') continue;
+      const noise = profile.noise || 0.1;
+      const estimate = compute1CardWinProb(seatCards[player], G.numPlayers, G.trumpSuit);
+      const pOne = Math.max(0, Math.min(1, (estimate + noise / 2 - 0.5) / noise));
+      weight *= Math.max(0.02, G.bids[player] === 1 ? pOne : 1 - pOne);
+    }
+    totalWeight += weight;
+    if (best.playerIndex === playerIndex) weightedWins += weight;
+  }
+  return totalWeight > 0 ? weightedWins / totalWeight : 0;
+}
+
 // ─── Grok true endgame (≤2 cards): tree search under sampled worlds ───
 // Each player selfishly maximizes own scoreRound. Depth is n×≤2 tricks.
 function grokEndgameSearch(hands, bids, tw, trumpSuit, leader, numPlayers, trick, me, spite) {
@@ -2299,9 +2475,13 @@ function pimcChooseCard(playerIndex, legalMoves, numSims) {
   const alreadyMade = G.tricksWon[playerIndex] >= (G.bids[playerIndex] || 0);
   const spite = alreadyMade ? findSpiteTarget(playerIndex) : undefined;
   const isGrok = getStyle(playerIndex) === 'grok';
+  const isCodex = getStyle(playerIndex) === 'codex';
 
   for (let sim = 0; sim < numSims; sim++) {
-    const oppHands = sampleOpponentHands(hand, playerIndex);
+    const sampled = isCodex
+      ? codexSampleWorld(hand, playerIndex)
+      : {hands:sampleOpponentHands(hand, playerIndex), weight:1};
+    const oppHands = sampled.hands;
 
     for (const card of legalMoves) {
       // Build complete hands array
@@ -2332,9 +2512,11 @@ function pimcChooseCard(playerIndex, legalMoves, numSims) {
         leader = best.playerIndex;
         // Simulate remaining tricks
         const result = simPlayOut(allHands, G.bids, tw, G.trumpSuit, leader, G.numPlayers, spite);
-        let sc = simScore(playerIndex, result, G.bids);
-        if (spite !== undefined && result[spite] !== G.bids[spite]) sc += isGrok ? GROK_CFG.spiteBonus : 2.0;
-        scores[card.rank + card.suit] += sc;
+        let sc = isCodex ? codexSimScore(playerIndex, result, G.bids) : simScore(playerIndex, result, G.bids);
+        if (spite !== undefined && result[spite] !== G.bids[spite]) {
+          sc += isCodex ? CODEX_CFG.spiteBonus : (isGrok ? GROK_CFG.spiteBonus : 2.0);
+        }
+        scores[card.rank + card.suit] += sampled.weight * sc;
       } else {
         // Trick not complete — simulate remaining players in this trick, then rest
         const nextP = (playerIndex + 1) % G.numPlayers;
@@ -2355,8 +2537,8 @@ function pimcChooseCard(playerIndex, legalMoves, numSims) {
           const needMore = tw[cur] < (G.bids[cur] || 0);
           const isLast = curTrick.length === G.numPlayers - 1;
           let pick;
-          if (isGrok) {
-            // Better mid-trick completion for Grok rollouts
+          if (isGrok || isCodex) {
+            // Stronger agents model contract-aware responses within this trick.
             const curB = curTrick.reduce((b, t) => cardBeats(t.card, b.card, ls) ? t : b);
             const wins = legal.filter(c => cardBeats(c, curB.card, ls));
             if (needMore) {
@@ -2395,9 +2577,11 @@ function pimcChooseCard(playerIndex, legalMoves, numSims) {
 
         // Simulate remaining tricks
         const result = simPlayOut(allHands, G.bids, tw, G.trumpSuit, leader, G.numPlayers, spite);
-        let sc = simScore(playerIndex, result, G.bids);
-        if (spite !== undefined && result[spite] !== G.bids[spite]) sc += isGrok ? GROK_CFG.spiteBonus : 2.0;
-        scores[card.rank + card.suit] += sc;
+        let sc = isCodex ? codexSimScore(playerIndex, result, G.bids) : simScore(playerIndex, result, G.bids);
+        if (spite !== undefined && result[spite] !== G.bids[spite]) {
+          sc += isCodex ? CODEX_CFG.spiteBonus : (isGrok ? GROK_CFG.spiteBonus : 2.0);
+        }
+        scores[card.rank + card.suit] += sampled.weight * sc;
       }
     }
   }
@@ -2419,9 +2603,13 @@ function pimcBid(playerIndex, numSims) {
   const cpp = G.cardsPerPlayer;
   const scores = {};
   for (let b = 0; b <= cpp; b++) scores[b] = 0;
+  const isCodex = getStyle(playerIndex) === 'codex';
 
   for (let sim = 0; sim < numSims; sim++) {
-    const oppHands = sampleOpponentHands(hand, playerIndex);
+    const sampled = isCodex
+      ? codexSampleWorld(hand, playerIndex)
+      : {hands:sampleOpponentHands(hand, playerIndex), weight:1};
+    const oppHands = sampled.hands;
 
     // Build hands array
     const allHands = [];
@@ -2447,7 +2635,7 @@ function pimcBid(playerIndex, numSims) {
 
       const myTricks = result[playerIndex];
       const score = scoreRound(myTricks, bid);
-      scores[bid] += score;
+      scores[bid] += sampled.weight * score;
     }
   }
 
@@ -2472,6 +2660,11 @@ function computeAIBid(playerIndex) {
 
   // 1-card rounds: all styles use exact hypergeometric formula
   if (cpp === 1) {
+    if (style === 'codex') {
+      estimate = codexOneCardWinProb(playerIndex);
+      const bid = estimate > CODEX_CFG.oneCardThreshold ? 1 : 0;
+      return constrainBid(bid, estimate, cpp);
+    }
     estimate = compute1CardWinProb(hand[0], G.numPlayers, G.trumpSuit);
     estimate += (Math.random() - 0.5) * player.noise;
     return constrainBid(Math.max(0, Math.min(1, Math.round(estimate))), estimate, cpp);
@@ -2493,10 +2686,10 @@ function computeAIBid(playerIndex) {
   // Bias corrects for sim playout underestimating real trick-taking
   // Bias values tuned from game data: higher = more chronic underbidder
   // PIMC bidding — bias & aggr tuned from 50k-game optimization
-  if ((style === 'void' || style === 'tempo' || style === 'sniper' || style === 'precision' || style === 'grok') && cpp >= 2) {
-    const sims = style === 'grok' ? GROK_CFG.bidSims : (style === 'tempo' ? 60 : 80);
-    const biasMap = {void: 0.229, tempo: 0.020, sniper: 0.070, precision: 0.165, grok: GROK_CFG.bias};
-    const aggrMap = {void: 1.00,  tempo: 1.02,  sniper: 1.00,  precision: 0.98, grok: GROK_CFG.aggr};
+  if ((style === 'void' || style === 'tempo' || style === 'sniper' || style === 'precision' || style === 'grok' || style === 'codex') && cpp >= 2) {
+    const sims = style === 'codex' ? CODEX_CFG.bidSims : (style === 'grok' ? GROK_CFG.bidSims : (style === 'tempo' ? 60 : 80));
+    const biasMap = {void: 0.229, tempo: 0.020, sniper: 0.070, precision: 0.165, grok: GROK_CFG.bias, codex:0};
+    const aggrMap = {void: 1.00,  tempo: 1.02,  sniper: 1.00,  precision: 0.98, grok: GROK_CFG.aggr, codex:1};
     const bias = biasMap[style] || 0;
     const aggr = aggrMap[style] || 1.0;
     // Geometric scoring rewards aggression in big rounds (the tri(B) made-bonus
@@ -2747,8 +2940,8 @@ function chooseAICard(playerIndex, legalMoves, ledSuit) {
   const style = getStyle(playerIndex);
 
   // PIMC play for all main AI styles (Grok: higher sims + endgame inside pimcChooseCard)
-  if (style === 'void' || style === 'tempo' || style === 'sniper' || style === 'precision' || style === 'grok') {
-    const sims = style === 'grok' ? GROK_CFG.playSims : (style === 'tempo' ? 40 : 80);
+  if (style === 'void' || style === 'tempo' || style === 'sniper' || style === 'precision' || style === 'grok' || style === 'codex') {
+    const sims = style === 'codex' ? CODEX_CFG.playSims : (style === 'grok' ? GROK_CFG.playSims : (style === 'tempo' ? 40 : 80));
     return pimcChooseCard(playerIndex, legalMoves, sims);
   }
   const bid = G.bids[playerIndex];
@@ -3588,7 +3781,16 @@ window.addEventListener('DOMContentLoaded', () => {
     const gt = document.getElementById('geometric-toggle');
     if (gt) { gt.checked = true; onScoringToggle(); }
   }
-  // Grok seat preference (default on)
+  // Optional AI seat preferences (default on)
+  const urlCodex = params.get('codex');
+  const savedCodex = localStorage.getItem('wist-include-codex');
+  const includeCodex = urlCodex === '0' || urlCodex === 'off' ? false
+    : urlCodex === '1' || urlCodex === 'on' ? true
+    : savedCodex === null ? true : savedCodex === '1';
+  window._includeCodex = includeCodex;
+  const codexTg = document.getElementById('codex-toggle');
+  if (codexTg) { codexTg.checked = includeCodex; onCodexToggle(); }
+
   const urlGrok = params.get('grok');
   const savedGrok = localStorage.getItem('wist-include-grok');
   const includeGrok = urlGrok === '0' || urlGrok === 'off' ? false
