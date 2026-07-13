@@ -3421,6 +3421,8 @@ function mpTryHostReconnect() {
         mpListenChat();
         if(G.phase==='playing') scheduleNextPlay();
         else if(G.phase==='bidding') scheduleBidding(G.currentBidderIndex);
+        else if(G.phase==='roundResult'){const last=G.roundHistory[G.roundHistory.length-1];if(last)showRoundResult(last.roundScores);}
+        else if(G.phase==='gameOver') showGameOver();
         return true;
       });
     });
