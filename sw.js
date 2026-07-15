@@ -1,4 +1,4 @@
-const CACHE = 'wist-v23';
+const CACHE = 'wist-v24';
 const ASSETS = ['./', './index.html', './multiplayer.html', './manifest.json'];
 
 self.addEventListener('install', event => {
@@ -18,7 +18,31 @@ self.addEventListener('activate', event => {
 });
 
 self.addEventListener('fetch', event => {
+  const req = event.request;
+  if (req.method !== 'GET') return;
+
+  // Pages: network-first, so HTML changes reach devices without a cache-name
+  // bump; fall back to the cached copy when offline. Cache keys are stored
+  // without the query string so links like index.html?players=4 or
+  // multiplayer.html?join=XXXX still resolve offline.
+  if (req.mode === 'navigate') {
+    const bare = req.url.split('#')[0].split('?')[0];
+    event.respondWith(
+      fetch(req).then(res => {
+        if (res.ok) {
+          const copy = res.clone();
+          caches.open(CACHE).then(cache => cache.put(bare, copy));
+        }
+        return res;
+      }).catch(() =>
+        caches.match(bare).then(cached => cached || caches.match('./index.html'))
+      )
+    );
+    return;
+  }
+
+  // Everything else (manifest, CDN scripts): cache-first, network fallback.
   event.respondWith(
-    caches.match(event.request).then(cached => cached || fetch(event.request))
+    caches.match(req).then(cached => cached || fetch(req))
   );
 });
