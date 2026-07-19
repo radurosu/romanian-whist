@@ -1,0 +1,288 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>X Bookmarks Reader</title>
+<style>
+  :root {
+    --bg: #f7f8fa; --card: #ffffff; --text: #0f1419; --muted: #536471;
+    --border: #e3e6ea; --accent: #1d9bf0; --accent-text: #ffffff; --chip: #eef3f6;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #0e1116; --card: #171b21; --text: #e7e9ea; --muted: #8b98a5;
+      --border: #2b323b; --accent: #1d9bf0; --chip: #1f2630;
+    }
+  }
+  * { box-sizing: border-box; }
+  [hidden] { display: none !important; }
+  body {
+    margin: 0; background: var(--bg); color: var(--text);
+    font: 15px/1.5 -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  }
+  header {
+    position: sticky; top: 0; z-index: 10; background: var(--bg);
+    border-bottom: 1px solid var(--border); padding: 12px 16px;
+  }
+  .bar { max-width: 720px; margin: 0 auto; display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+  .bar h1 { font-size: 18px; margin: 0 auto 0 0; white-space: nowrap; }
+  .bar h1 span { color: var(--accent); }
+  button, .btn {
+    background: var(--card); color: var(--text); border: 1px solid var(--border);
+    border-radius: 999px; padding: 7px 15px; font-size: 14px; font-weight: 600;
+    cursor: pointer; text-decoration: none; display: inline-block;
+  }
+  button.primary, .btn.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-text); }
+  button:disabled { opacity: .5; cursor: default; }
+  .controls { max-width: 720px; margin: 0 auto; display: flex; gap: 10px; padding-top: 10px; flex-wrap: wrap; }
+  input[type=search], select {
+    background: var(--card); color: var(--text); border: 1px solid var(--border);
+    border-radius: 999px; padding: 8px 14px; font-size: 14px; outline: none;
+  }
+  input[type=search] { flex: 1; min-width: 180px; }
+  input[type=search]:focus { border-color: var(--accent); }
+  main { max-width: 720px; margin: 0 auto; padding: 16px; }
+  .meta-line { color: var(--muted); font-size: 13px; margin-bottom: 12px; }
+  .card {
+    background: var(--card); border: 1px solid var(--border); border-radius: 14px;
+    padding: 14px 16px; margin-bottom: 12px;
+  }
+  .card .head { display: flex; align-items: center; gap: 10px; margin-bottom: 6px; }
+  .avatar { width: 40px; height: 40px; border-radius: 50%; background: var(--chip); flex: none; }
+  .who { min-width: 0; }
+  .who .name { font-weight: 700; }
+  .who .handle { color: var(--muted); font-size: 13px; }
+  .date { margin-left: auto; color: var(--muted); font-size: 13px; white-space: nowrap; }
+  .card .text { white-space: pre-wrap; overflow-wrap: break-word; }
+  .card .text a { color: var(--accent); text-decoration: none; }
+  .thumbs { display: flex; gap: 8px; margin-top: 10px; flex-wrap: wrap; }
+  .thumbs img { max-height: 220px; max-width: 100%; border-radius: 10px; border: 1px solid var(--border); }
+  .foot { display: flex; gap: 16px; margin-top: 10px; color: var(--muted); font-size: 13px; align-items: center; }
+  .foot a { color: var(--accent); text-decoration: none; margin-left: auto; font-weight: 600; }
+  .empty { text-align: center; color: var(--muted); padding: 60px 20px; }
+  .empty h2 { color: var(--text); }
+  .user-chip { display: flex; align-items: center; gap: 8px; background: var(--chip); border-radius: 999px; padding: 4px 12px 4px 4px; font-size: 13px; font-weight: 600; }
+  .user-chip img { width: 26px; height: 26px; border-radius: 50%; }
+  #toast {
+    position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%);
+    background: var(--text); color: var(--bg); padding: 10px 18px; border-radius: 999px;
+    font-size: 14px; opacity: 0; transition: opacity .3s; pointer-events: none; max-width: 90vw;
+  }
+  #toast.show { opacity: 1; }
+</style>
+</head>
+<body>
+<header>
+  <div class="bar">
+    <h1><span>𝕏</span> Bookmarks Reader</h1>
+    <div id="account"></div>
+    <button id="syncBtn" class="primary" hidden>Sync</button>
+    <button id="importBtn">Import</button>
+    <button id="exportBtn">Export</button>
+    <input type="file" id="importFile" accept="application/json,.json" hidden>
+  </div>
+  <div class="controls">
+    <input type="search" id="search" placeholder="Search bookmarks…">
+    <select id="author"><option value="">All authors</option></select>
+    <select id="sort">
+      <option value="newest">Newest first</option>
+      <option value="oldest">Oldest first</option>
+      <option value="likes">Most liked</option>
+    </select>
+  </div>
+</header>
+<main>
+  <div class="meta-line" id="meta"></div>
+  <div id="list"></div>
+</main>
+<div id="toast"></div>
+
+<script>
+let all = [];
+let status = {};
+
+const $ = (id) => document.getElementById(id);
+const esc = (s) => s.replace(/[&<>"']/g, (c) =>
+  ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+
+function toast(msg) {
+  const t = $('toast');
+  t.textContent = msg;
+  t.classList.add('show');
+  clearTimeout(t._h);
+  t._h = setTimeout(() => t.classList.remove('show'), 3500);
+}
+
+function fmtDate(iso) {
+  if (!iso) return '';
+  return new Date(iso).toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' });
+}
+
+function fmtNum(n) {
+  if (n == null) return '0';
+  if (n >= 1e6) return (n / 1e6).toFixed(1) + 'M';
+  if (n >= 1e3) return (n / 1e3).toFixed(1) + 'K';
+  return String(n);
+}
+
+function renderText(b) {
+  let html = esc(b.text);
+  for (const u of b.urls || []) {
+    const link = `<a href="${esc(u.expanded)}" target="_blank" rel="noopener">${esc(u.display || u.expanded)}</a>`;
+    html = u.short && html.includes(esc(u.short)) ? html.replaceAll(esc(u.short), link) : html;
+  }
+  // Linkify @mentions and #hashtags
+  html = html.replace(/(^|\s)@([A-Za-z0-9_]{1,15})\b/g,
+    '$1<a href="https://x.com/$2" target="_blank" rel="noopener">@$2</a>');
+  return html;
+}
+
+function render() {
+  const q = $('search').value.trim().toLowerCase();
+  const author = $('author').value;
+  const sort = $('sort').value;
+
+  let items = all.filter((b) =>
+    (!author || b.author?.username === author) &&
+    (!q || b.text.toLowerCase().includes(q) ||
+      (b.author?.name || '').toLowerCase().includes(q) ||
+      (b.author?.username || '').toLowerCase().includes(q)));
+
+  items = items.slice().sort((a, b) => {
+    if (sort === 'likes') return (b.metrics?.like_count || 0) - (a.metrics?.like_count || 0);
+    const cmp = (b.created_at || '').localeCompare(a.created_at || '');
+    return sort === 'oldest' ? -cmp : cmp;
+  });
+
+  $('meta').textContent = all.length
+    ? `${items.length} of ${all.length} bookmarks` +
+      (status.lastSync ? ` · last synced ${fmtDate(status.lastSync)}` : '')
+    : '';
+
+  if (!all.length) {
+    $('list').innerHTML = `<div class="empty">
+      <h2>No bookmarks yet</h2>
+      <p>${status.authenticated
+        ? 'Hit <b>Sync</b> to pull your bookmarks from X.'
+        : status.configured
+          ? 'Connect your X account to get started, or import a JSON export.'
+          : 'Set <code>X_CLIENT_ID</code> in <code>.env</code> (see README), or import a JSON export.'}</p>
+    </div>`;
+    return;
+  }
+
+  $('list').innerHTML = items.map((b) => `
+    <article class="card">
+      <div class="head">
+        ${b.author?.profile_image_url
+          ? `<img class="avatar" src="${esc(b.author.profile_image_url)}" alt="" loading="lazy">`
+          : '<div class="avatar"></div>'}
+        <div class="who">
+          <div class="name">${esc(b.author?.name || 'Unknown')}</div>
+          ${b.author?.username ? `<div class="handle">@${esc(b.author.username)}</div>` : ''}
+        </div>
+        <div class="date">${fmtDate(b.created_at)}</div>
+      </div>
+      <div class="text">${renderText(b)}</div>
+      ${(b.media || []).filter((m) => m.url).length ? `<div class="thumbs">${b.media
+        .filter((m) => m.url)
+        .map((m) => `<img src="${esc(m.url)}" alt="${esc(m.alt || '')}" loading="lazy">`)
+        .join('')}</div>` : ''}
+      <div class="foot">
+        <span>❤️ ${fmtNum(b.metrics?.like_count)}</span>
+        <span>🔁 ${fmtNum(b.metrics?.retweet_count)}</span>
+        <a href="${esc(b.url)}" target="_blank" rel="noopener">Open on X ↗</a>
+      </div>
+    </article>`).join('');
+}
+
+function rebuildAuthorFilter() {
+  const authors = new Map();
+  for (const b of all) {
+    if (b.author?.username) authors.set(b.author.username, b.author.name || b.author.username);
+  }
+  const options = [...authors.entries()]
+    .sort((a, z) => a[1].localeCompare(z[1]))
+    .map(([u, n]) => `<option value="${esc(u)}">${esc(n)} (@${esc(u)})</option>`);
+  $('author').innerHTML = '<option value="">All authors</option>' + options.join('');
+}
+
+async function loadBookmarks() {
+  const store = await (await fetch('/api/bookmarks')).json();
+  all = store.bookmarks || [];
+  status.lastSync = store.lastSync;
+  rebuildAuthorFilter();
+  render();
+}
+
+async function loadStatus() {
+  status = await (await fetch('/api/status')).json();
+  const acct = $('account');
+  if (status.authenticated && status.user) {
+    acct.innerHTML = `<span class="user-chip">
+      ${status.user.profile_image_url ? `<img src="${esc(status.user.profile_image_url)}" alt="">` : ''}
+      @${esc(status.user.username)}</span>`;
+    $('syncBtn').hidden = false;
+  } else if (status.configured) {
+    acct.innerHTML = '<a class="btn primary" href="/auth/login">Connect X account</a>';
+    $('syncBtn').hidden = true;
+  } else {
+    acct.innerHTML = '';
+    $('syncBtn').hidden = true;
+  }
+}
+
+$('syncBtn').onclick = async () => {
+  const btn = $('syncBtn');
+  btn.disabled = true;
+  btn.textContent = 'Syncing…';
+  try {
+    const res = await fetch('/api/sync', { method: 'POST' });
+    const out = await res.json();
+    if (!res.ok) throw new Error(out.error || 'Sync failed');
+    toast(`Synced ${out.fetched} bookmarks (${out.total} total)` +
+      (out.rateLimited ? ' — rate limited, run Sync again later for the rest' : ''));
+    await loadBookmarks();
+  } catch (e) {
+    toast('Sync failed: ' + e.message);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = 'Sync';
+  }
+};
+
+$('importBtn').onclick = () => $('importFile').click();
+$('importFile').onchange = async (e) => {
+  const file = e.target.files[0];
+  if (!file) return;
+  try {
+    const res = await fetch('/api/import', { method: 'POST', body: await file.text() });
+    const out = await res.json();
+    if (!res.ok) throw new Error(out.error || 'Import failed');
+    toast(`Imported ${out.imported} bookmarks (${out.total} total)`);
+    await loadBookmarks();
+  } catch (err) {
+    toast('Import failed: ' + err.message);
+  } finally {
+    e.target.value = '';
+  }
+};
+
+$('exportBtn').onclick = () => {
+  const blob = new Blob([JSON.stringify({ bookmarks: all }, null, 2)], { type: 'application/json' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = 'x-bookmarks.json';
+  a.click();
+  URL.revokeObjectURL(a.href);
+};
+
+$('search').oninput = render;
+$('author').onchange = render;
+$('sort').onchange = render;
+
+loadStatus().then(loadBookmarks);
+</script>
+</body>
+</html>
