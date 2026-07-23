@@ -1,5 +1,5 @@
 const CACHE = 'wist-v24';
-const ASSETS = ['./', './index.html', './multiplayer.html', './manifest.json'];
+const ASSETS = ['./', './index.html', './multiplayer.html', './manifest.json', './icon-180.png'];
 
 self.addEventListener('install', event => {
   event.waitUntil(
