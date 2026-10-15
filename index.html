@@ -228,12 +228,32 @@ button:disabled { cursor: default; }
 #topbar {
   flex: none;
   display: flex;
-  align-items: center;
-  gap: 12px;
-  min-height: 46px;
-  padding: calc(6px + var(--safe-t)) 10px 4px 14px;
+  flex-direction: column;
+  gap: 5px;
+  padding: calc(6px + var(--safe-t)) 10px 4px 10px;
   font-size: 14.5px;
 }
+.tb-row { display: flex; align-items: center; gap: 12px; min-height: 38px; padding-left: 4px; }
+/* Standings: ranked, so the leader and your place read at a glance */
+.standings { display: grid; grid-template-columns: repeat(var(--n), minmax(0, 1fr)); gap: 4px; }
+.st {
+  display: flex;
+  align-items: baseline;
+  gap: 5px;
+  min-width: 0;
+  padding: 3px 8px 4px;
+  border-radius: 8px;
+  background: rgba(0, 0, 0, .2);
+  font-size: 14px;
+}
+.st i { flex: none; font-style: normal; font-size: 11.5px; font-weight: 700; color: var(--chalk-3); }
+.st .st-name { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--chalk-2); font-weight: 600; }
+.st b { flex: none; font-weight: 800; font-variant-numeric: tabular-nums; }
+.st.lead { background: rgba(238, 243, 239, .14); }
+.st.lead .st-name { color: var(--chalk); }
+.st.me { box-shadow: inset 0 0 0 1.5px rgba(238, 243, 239, .45); }
+.st.me .st-name { color: var(--chalk); font-weight: 800; }
+@media (max-width: 519px) { .standings.many { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
 .tb-round { font-weight: 800; font-size: 17px; white-space: nowrap; }
 .tb-round small { font-weight: 600; font-size: 14px; color: var(--chalk-2); }
 .tb-stat { color: var(--chalk-2); white-space: nowrap; font-variant-numeric: tabular-nums; }
@@ -259,7 +279,6 @@ button:disabled { cursor: default; }
   .seat { min-width: 104px; max-width: 150px; padding: 7px 11px 8px; }
   .seat .nm { font-size: 16px; }
   .seat .nm .face { font-size: 15px; }
-  .seat .score { font-size: 15px; }
   .pip { width: 10px; height: 10px; }
   #table { --D: calc(var(--cw) * .62 + 62px); }
 }
@@ -290,7 +309,7 @@ button:disabled { cursor: default; }
   top: var(--seat-y);
   transform: translate(-50%, -50%);
   z-index: 3;
-  min-width: 84px;
+  min-width: 78px;
   max-width: 124px;
   padding: 5px 8px 6px;
   border-radius: 11px;
@@ -307,8 +326,6 @@ button:disabled { cursor: default; }
 .seat .nm .txt { overflow: hidden; text-overflow: ellipsis; }
 .seat .nm .src { flex: none; font-size: 11px; color: var(--chalk-2); }
 .seat .row { display: flex; align-items: center; gap: 8px; margin-top: 3px; min-height: 18px; }
-.seat .nm .score { margin-left: auto; padding-left: 8px; }
-.seat .score { font-weight: 700; font-size: 13.5px; color: var(--chalk-2); font-variant-numeric: tabular-nums; }
 .dealer {
   display: inline-grid;
   place-items: center;
@@ -417,7 +434,6 @@ button:disabled { cursor: default; }
   font-size: 14.5px;
 }
 #me-strip .nm { font-weight: 800; }
-#me-strip .score { font-weight: 700; color: var(--chalk-2); font-variant-numeric: tabular-nums; }
 #me-strip.active .nm { color: var(--brass); }
 #hand-area {
   --n: 8;
@@ -678,7 +694,11 @@ table.score-sheet {
 /* Short landscape phones: shrink chrome, keep cards readable */
 @media (max-height: 520px) and (orientation: landscape) {
   :root { --cw: clamp(44px, 12.5vh, 64px); }
-  #topbar { min-height: 38px; padding-top: calc(3px + var(--safe-t)); }
+  #topbar { flex-direction: row; align-items: center; gap: 10px; padding-top: calc(3px + var(--safe-t)); }
+  .tb-row { display: contents; }
+  .tb-spacer { display: none; }
+  .standings { order: 1; flex: 1 1 auto; grid-template-columns: repeat(var(--n), minmax(0, 1fr)) !important; }
+  .tb-btn { order: 2; }
   #me-strip { height: 18px; font-size: 13px; }
   #hand-area { padding-top: 12px; height: calc(var(--cw) * 1.4 + 16px); }
   #action-bar { min-height: 48px; padding-top: 5px; padding-bottom: calc(5px + var(--safe-b)); }
@@ -3868,12 +3888,25 @@ function renderTopBar() {
   const title = !G.biddingComplete ? 'Bids placed so far, out of the tricks this round'
     : sum > cpp ? `Overbid by ${sum - cpp}: someone has to miss`
     : `Underbid by ${cpp - sum}: tricks are up for grabs`;
-  document.getElementById('topbar').innerHTML =
-    `<span class="tb-round">Round ${G.currentRoundIndex + 1}<small>/${G.roundSequence.length}</small></span>`
+  document.getElementById('topbar').innerHTML = '<div class="tb-row">'
+    + `<span class="tb-round">Round ${G.currentRoundIndex + 1}<small>/${G.roundSequence.length}</small></span>`
     + `<span class="tb-stat" title="${title}">Bids <b class="${cls}">${sum}</b>/${cpp}</span>`
     + (G.scoringMode === 'geometric' ? '<span class="tb-mode">Geometric</span>' : '')
     + '<span class="tb-spacer"></span>'
-    + '<button class="tb-btn" onclick="showHistory()">Score sheet</button>';
+    + '<button class="tb-btn" onclick="showHistory()">Score sheet</button>'
+    + '</div>' + standingsHTML();
+}
+
+// Everyone ranked by total score; ties share a place.
+function standingsHTML() {
+  const order = G.scores.map((s, i) => ({ s, i })).sort((a, b) => b.s - a.s || a.i - b.i);
+  let place = 0, prev = null;
+  const rows = order.map((e, k) => {
+    if (e.s !== prev) { place = k + 1; prev = e.s; }
+    const cls = (e.i === ME ? ' me' : '') + (place === 1 ? ' lead' : '');
+    return `<span class="st${cls}" title="${escHTML(G.playerNames[e.i])}: ${e.s}"><i>${place}</i><span class="st-name">${playerLabel(e.i)}</span><b>${e.s}</b></span>`;
+  }).join('');
+  return `<div class="standings${G.numPlayers >= 5 ? ' many' : ''}" style="--n:${G.numPlayers}" aria-label="Standings">${rows}</div>`;
 }
 
 function renderSeats() {
@@ -3887,7 +3920,7 @@ function renderSeats() {
     if (style === 'jev' && G.decisionSource && G.decisionSource[p] === 'pimc') src = '<span class="src" title="Jev is offline; a built-in player stands in">⚠</span>';
     html += `<div class="seat${isActive(p) ? ' active' : ''}" style="--ux:${g.ux};--uy:${g.uy}">`
       + (G.dealerIndex === p ? '<span class="dealer" title="Dealer">D</span>' : '')
-      + `<div class="nm"><span class="face">${faceOf(p)}</span><span class="txt">${playerLabel(p)}</span>${src}<span class="score" title="Total score">${G.scores[p]}</span></div>`
+      + `<div class="nm"><span class="face">${faceOf(p)}</span><span class="txt">${playerLabel(p)}</span>${src}</div>`
       + `<div class="row">${bidHTML(p)}</div>`
       + '</div>';
   }
@@ -3948,7 +3981,7 @@ function renderMeStrip() {
   const el = document.getElementById('me-strip');
   el.className = isActive(ME) ? 'active' : '';
   el.innerHTML = (G.dealerIndex === ME ? '<span class="dealer" title="You deal">D</span>' : '')
-    + `<span class="nm">${faceOf(ME)} You</span>${bidHTML(ME)}<span class="score">${G.scores[ME]} pts</span>`;
+    + `<span class="nm">${faceOf(ME)} You</span>${bidHTML(ME)}`;
 }
 
 function renderActionBar() {
