@@ -290,8 +290,8 @@ button:disabled { cursor: default; }
   top: var(--seat-y);
   transform: translate(-50%, -50%);
   z-index: 3;
-  min-width: 76px;
-  max-width: 112px;
+  min-width: 84px;
+  max-width: 124px;
   padding: 5px 8px 6px;
   border-radius: 11px;
   background: rgba(3, 24, 19, .5);
@@ -306,7 +306,8 @@ button:disabled { cursor: default; }
 .seat .nm .face { flex: none; font-size: 13px; }
 .seat .nm .txt { overflow: hidden; text-overflow: ellipsis; }
 .seat .nm .src { flex: none; font-size: 11px; color: var(--chalk-2); }
-.seat .row { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-top: 4px; min-height: 13px; }
+.seat .row { display: flex; align-items: center; gap: 8px; margin-top: 3px; min-height: 18px; }
+.seat .nm .score { margin-left: auto; padding-left: 8px; }
 .seat .score { font-weight: 700; font-size: 13.5px; color: var(--chalk-2); font-variant-numeric: tabular-nums; }
 .dealer {
   display: inline-grid;
@@ -323,17 +324,19 @@ button:disabled { cursor: default; }
 .seat .dealer { position: absolute; top: -8px; right: -8px; }
 
 /* Bid vs tricks: filled = won, hollow = still needed, red = over */
-.pips { display: inline-flex; align-items: center; gap: 2.5px; min-height: 12px; }
+.bid { display: inline-flex; align-items: center; gap: 4px; font-size: 12.5px; color: var(--chalk-2); white-space: nowrap; }
+.bid b { font-size: 16px; font-weight: 800; line-height: 1; color: var(--chalk); font-variant-numeric: tabular-nums; margin-right: 3px; }
+.bid.made b { color: var(--made); }
+.bid.bust b { color: var(--bust); }
+.bid.none b { color: var(--chalk-3); }
+.bid.thinking { color: var(--brass); font-weight: 700; font-size: 13px; }
+.pips { display: inline-flex; align-items: center; gap: 2.5px; }
 .pip { width: 8px; height: 8px; border-radius: 50%; border: 1.5px solid var(--chalk-2); }
 .pip.won { background: var(--chalk); border-color: var(--chalk); }
 .pip.over { background: var(--bust); border-color: var(--bust); }
-.pips.made .pip.won { background: var(--made); border-color: var(--made); }
+.bid.made .pip.won { background: var(--made); border-color: var(--made); }
 .pips.dense { gap: 1.5px; }
 .pips.dense .pip { width: 6px; height: 6px; border-width: 1.2px; }
-.pips .zero { font-size: 11px; font-weight: 800; line-height: 10px; padding: 0 3px; border: 1.5px solid var(--chalk-2); border-radius: 6px; color: var(--chalk-2); }
-.pips.made .zero { border-color: var(--made); color: var(--made); }
-.pips.bust .zero { border-color: var(--bust); color: var(--bust); }
-.pips .thinking { font-size: 12px; color: var(--brass); font-weight: 700; }
 
 .tcard {
   position: absolute;
@@ -482,7 +485,10 @@ button:disabled { cursor: default; }
 }
 .hint-btn:hover { background: rgba(143,208,255,.18); }
 .bid-panel { width: 100%; max-width: 520px; display: flex; flex-direction: column; gap: 7px; }
-.bid-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; font-size: 14px; }
+.bid-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; font-size: 14px; }
+.bid-info { display: flex; flex-direction: column; gap: 2px; line-height: 1.3; }
+.bid-info .muted b { color: var(--chalk); font-weight: 800; }
+.bid-info .warn { color: var(--bust); font-size: 13.5px; font-weight: 600; }
 .bid-head .lbl { font-weight: 800; font-size: 16px; color: var(--brass); margin-right: 6px; }
 .bid-row { display: grid; grid-template-columns: repeat(var(--cols, 5), 1fr); gap: 6px; }
 .bid-btn {
@@ -3817,22 +3823,24 @@ function isActive(p) {
          (G.phase === 'playing' && currentPlayerToAct() === p);
 }
 
-// Bid vs tricks as pips: filled = won, hollow = still needed, red = over the bid.
-function pipsHTML(p) {
+// A player's bid as a number. Once play starts, pips show progress:
+// filled = taken, hollow = still needed, red = over the bid.
+function bidHTML(p) {
   const bid = G.bids[p];
   if (bid === null || bid === undefined) {
-    const thinking = p !== ME && G.phase === 'bidding' && G.currentBidderIndex === p;
-    return `<span class="pips">${thinking ? '<span class="thinking">bidding</span>' : ''}</span>`;
+    if (p !== ME && G.phase === 'bidding' && G.currentBidderIndex === p) return '<span class="bid thinking">bidding…</span>';
+    return '<span class="bid none" title="No bid yet"><small>bid</small><b>–</b></span>';
   }
   const won = G.biddingComplete ? G.tricksWon[p] : 0;
   const state = !G.biddingComplete ? '' : won === bid ? 'made' : won > bid ? 'bust' : '';
-  const count = Math.max(bid, won);
-  let inner = bid === 0 ? '<span class="zero">0</span>' : '';
+  const count = G.biddingComplete ? Math.max(bid, won) : 0;
+  let pips = '';
   for (let i = 0; i < count; i++) {
-    inner += `<i class="pip ${i < Math.min(won, bid) ? 'won' : i < bid ? '' : 'over'}"></i>`;
+    pips += `<i class="pip ${i < Math.min(won, bid) ? 'won' : i < bid ? '' : 'over'}"></i>`;
   }
-  const label = G.biddingComplete ? `${won} of ${bid} tricks` : `bid ${bid}`;
-  return `<span class="pips ${state}${count > 5 ? ' dense' : ''}" title="${label}" aria-label="${label}">${inner}</span>`;
+  const label = G.biddingComplete ? `bid ${bid}, took ${won}` : `bid ${bid}`;
+  return `<span class="bid ${state}" title="${label}" aria-label="${label}"><small>bid</small><b>${bid}</b>`
+    + (pips ? `<span class="pips${count > 5 ? ' dense' : ''}">${pips}</span>` : '') + '</span>';
 }
 
 function cardHTML(card, extra = '', tag = 'div', attrs = '') {
@@ -3879,8 +3887,8 @@ function renderSeats() {
     if (style === 'jev' && G.decisionSource && G.decisionSource[p] === 'pimc') src = '<span class="src" title="Jev is offline; a built-in player stands in">⚠</span>';
     html += `<div class="seat${isActive(p) ? ' active' : ''}" style="--ux:${g.ux};--uy:${g.uy}">`
       + (G.dealerIndex === p ? '<span class="dealer" title="Dealer">D</span>' : '')
-      + `<div class="nm"><span class="face">${faceOf(p)}</span><span class="txt">${playerLabel(p)}</span>${src}</div>`
-      + `<div class="row">${pipsHTML(p)}<span class="score">${G.scores[p]}</span></div>`
+      + `<div class="nm"><span class="face">${faceOf(p)}</span><span class="txt">${playerLabel(p)}</span>${src}<span class="score" title="Total score">${G.scores[p]}</span></div>`
+      + `<div class="row">${bidHTML(p)}</div>`
       + '</div>';
   }
   document.getElementById('seats').innerHTML = html;
@@ -3940,7 +3948,7 @@ function renderMeStrip() {
   const el = document.getElementById('me-strip');
   el.className = isActive(ME) ? 'active' : '';
   el.innerHTML = (G.dealerIndex === ME ? '<span class="dealer" title="You deal">D</span>' : '')
-    + `<span class="nm">${faceOf(ME)} You</span>${pipsHTML(ME)}<span class="score">${G.scores[ME]}</span>`;
+    + `<span class="nm">${faceOf(ME)} You</span>${bidHTML(ME)}<span class="score">${G.scores[ME]} pts</span>`;
 }
 
 function renderActionBar() {
@@ -3956,10 +3964,14 @@ function renderActionBar() {
       btns += `<button class="bid-btn${i === forbidden ? ' forbidden' : ''}" ${ok ? `onclick="humanBid(${i})"` : 'disabled'} aria-label="${i === forbidden ? `${i}, not allowed` : `Bid ${i}`}">${i}</button>`;
     }
     const sum = G.bids.reduce((a, b) => a + (b ?? 0), 0);
-    const note = forbidden !== null
-      ? `You can't bid ${forbidden}: bids would total ${cpp}.`
-      : `${sum} bid so far of ${cpp}.`;
-    bar.innerHTML = `<div class="bid-panel"><div class="bid-head"><span><span class="lbl">Your bid</span><span class="muted">${note}</span></span>`
+    const placed = [];
+    for (let k = 1; k <= G.numPlayers; k++) {
+      const p = (G.dealerIndex + k) % G.numPlayers; // bidding starts left of the dealer
+      if (p !== ME && G.bids[p] !== null) placed.push(`${playerLabel(p)} <b>${G.bids[p]}</b>`);
+    }
+    const others = placed.length ? `${placed.join(', ')}. Total ${sum} of ${cpp}.` : `You bid first. ${cpp} tricks to take.`;
+    const warn = forbidden !== null ? `<span class="warn">You can't bid ${forbidden}: the total would be ${cpp}.</span>` : '';
+    bar.innerHTML = `<div class="bid-panel"><div class="bid-head"><div class="bid-info"><span><span class="lbl">Your bid</span><span class="muted">${others}</span></span>${warn}</div>`
       + '<button class="hint-btn" onclick="toggleBidSuggestion()">Hint</button></div>'
       + `<div class="bid-row" style="--cols:${cols};--nb:${nb}">${btns}</div></div>`;
   } else if (G.phase === 'bidding') {
@@ -3980,7 +3992,7 @@ function renderActionBar() {
     bar.innerHTML = `<span class="status-text"><span class="who">${playerLabel(currentPlayerToAct())}</span> to play</span>`;
   } else if (G.phase === 'trickResult') {
     const w = G.trickWinnerIndex;
-    bar.innerHTML = `<span class="status-text">${w === ME ? 'You take the trick' : `<span class="who">${playerLabel(w)}</span> takes the trick`}</span>${pipsHTML(w)}`;
+    bar.innerHTML = `<span class="status-text">${w === ME ? 'You take the trick' : `<span class="who">${playerLabel(w)}</span> takes the trick`}</span>${bidHTML(w)}`;
   } else {
     bar.innerHTML = '';
   }
