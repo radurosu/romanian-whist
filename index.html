@@ -625,6 +625,10 @@ body {
     <input type="password" id="gemini-key" class="gemini-key-input" placeholder="Gemini API key" autocomplete="off"
            style="display:none;width:240px;max-width:80vw;padding:8px;border-radius:6px;border:1px solid #678;background:#1b2733;color:#fff;font-size:13px">
     <span id="gemini-hint" style="display:none;font-size:11px;opacity:0.5">Key stored locally in this browser only.</span>
+    <label id="jev-toggle-row" style="display:none;font-size:15px;opacity:0.85;cursor:pointer">
+      <input type="checkbox" id="jev-toggle" onchange="onJevToggle()"> ∵ Add Jev (TypeSafe) player
+    </label>
+    <span id="jev-hint" style="display:none;font-size:11px;opacity:0.5">Via local proxy at this origin. API down → Grok-style PIMC fallback.</span>
     <label style="font-size:15px;opacity:0.85;cursor:pointer">
       <input type="checkbox" id="geometric-toggle" onchange="onScoringToggle()"> 📐 Geometric scoring
     </label>
@@ -868,6 +872,7 @@ function pickOpponents(count) {
   );
   const forced = [];
   if (includeCodex) forced.push('Codex');
+  if (window._includeJev && jevConfigured()) forced.push('Jev');
   if (window._geminiApiKey) forced.push('Gemini');
   if (includeGrok) forced.push('Grok');
   const rest = pool.filter(n => !forced.includes(n)).sort(() => Math.random() - 0.5);
@@ -957,6 +962,10 @@ const OPPONENT_AREAS = {
  *    Play    : Constrained hidden-hand worlds plus late-match pressure.
  *    Eval    : 84.14 avg / 28.0% wins vs Grok's 82.64 / 21.2% (300 games).
  *
+ *  JEV ∵ — TypeSafe System One (live API)
+ *    Bidding / play: Choice over valid bids / legal cards. No search.
+ *    Falls back to PIMC if the proxy/API is down.
+ *
  * ═══════════════════════════════════════════════════════════════════
  */
 const PLAYERS = {
@@ -968,6 +977,7 @@ const PLAYERS = {
   'Katya':  { style: 'precision', face: '🦊', noise: 0.08 },
   'Tempo2': { style: 'tempo',     face: '🔥', noise: 0.15 },
   'Gemini': { style: 'gemini',    face: '🤖', noise: 0 },
+  'Jev':    { style: 'jev',       face: '∵', noise: 0 },
 };
 
 function getFace(name) {
@@ -1247,6 +1257,348 @@ async function geminiChooseCard(playerIndex, legalMoves, ledSuit) {
   return pimcChooseCard(playerIndex, legalMoves, 80);
 }
 
+// ─── Jev (TypeSafe System One) ───
+// Browser never talks to api.typesafe.ai (no CORS). Only the local proxy.
+const TYPESAFE_MODEL = 'jev-latest';
+let _jevMode = 'pimc'; // 'jev-api' | 'pimc' | 'auto'
+
+function jevOnProxyOrigin() {
+  return (location.hostname === '127.0.0.1' || location.hostname === 'localhost') && location.port === '8787';
+}
+
+function jevConfigured() {
+  return !!(window._typesafeEndpoint || jevOnProxyOrigin());
+}
+
+function jevUrl() {
+  if (window._typesafeEndpoint) return window._typesafeEndpoint;
+  if (jevOnProxyOrigin()) return '/v1/systemone';
+  return null;
+}
+
+function cardId(card) {
+  return card.rank + '_' + card.suit;
+}
+
+function jevScoringBlurb() {
+  return G.scoringMode === 'geometric'
+    ? 'Geometric: make bid B = 5 + B(B+1)/2 points. Miss by d = -d(d+1)/2. Bigger made bids pay more; big misses hurt more.'
+    : 'Linear: make bid B = 5+B points. Miss by d = -d. Exact contract — extra tricks are as bad as missing.';
+}
+
+function jevPlayerRow(i) {
+  const bid = G.bids[i];
+  const won = G.tricksWon[i];
+  let status = 'not yet bid';
+  if (bid !== null) {
+    const n = bid - won;
+    status = n > 0 ? `needs ${n} more` : n === 0 ? 'DONE — will try to lose extra tricks' : `OVER — made ${won}, bid ${bid}`;
+  }
+  const voids = G.knownVoids && G.knownVoids[i]
+    ? Object.keys(G.knownVoids[i]).filter(s => G.knownVoids[i][s])
+    : [];
+  return {
+    name: G.playerNames[i],
+    isMe: false,
+    bid,
+    tricksWon: won,
+    status,
+    matchScore: G.scores[i],
+    voids: voids.map(s => SUIT_NAMES[s] || s),
+  };
+}
+
+function buildJevBidState(playerIndex, validBids, forbidden) {
+  const hand = G.hands[playerIndex];
+  const cpp = G.cardsPerPlayer;
+  const bidderPos = G.bids.filter(b => b !== null).length + 1;
+  return {
+    game: 'Romanian Whist',
+    rules: {
+      followSuit: 'Must follow the led suit if possible.',
+      voidMustTrump: 'If void in led suit, MUST play trump if you have any.',
+      lastBidder: 'The last bidder cannot make the sum of bids equal the number of tricks this round.',
+      scoring: jevScoringBlurb(),
+      trumpCardOutOfPlay: 'The face-up trump card is removed from the deck and cannot be played. The next-highest trump in hand is the top trump.',
+    },
+    round: {
+      index: G.currentRoundIndex + 1,
+      of: G.roundSequence.length,
+      cardsPerPlayer: cpp,
+      trumpSuit: G.trumpSuit ? SUIT_NAMES[G.trumpSuit] : 'No Trump',
+      trumpCard: G.trumpCard ? `${cardToText(G.trumpCard)} (OUT OF PLAY)` : 'none (no trump this round)',
+    },
+    me: {
+      name: G.playerNames[playerIndex],
+      bidderPosition: bidderPos,
+      of: G.numPlayers,
+      isLastBidder: bidderPos === G.numPlayers,
+      hand: hand.map(cardToText),
+    },
+    bidsSoFar: G.bids.map((b, i) => b === null ? null : { name: G.playerNames[i], bid: b }).filter(Boolean),
+    forbiddenBid: forbidden,
+    validBids,
+    standings: G.scores.map((s, i) => ({ name: G.playerNames[i], score: s })),
+  };
+}
+
+function describeJevCard(card, playerIndex, ledSuit) {
+  const bits = [cardToText(card)];
+  if (G.trumpSuit && card.suit === G.trumpSuit) bits.push('trump');
+  if (ledSuit && card.suit === ledSuit) bits.push('follows led suit');
+  else if (ledSuit) bits.push('does not follow');
+  if (isHighestRemaining(card, G.hands[playerIndex])) bits.push('master of this suit among remaining cards');
+  if (G.currentTrick.length > 0) {
+    const win = currentWinner();
+    bits.push(cardBeats(card, win.card, ledSuit) ? 'beats current winner' : 'loses to current winner');
+  }
+  return bits.join(' — ');
+}
+
+function buildJevPlayState(playerIndex, legalMoves, ledSuit) {
+  const bid = G.bids[playerIndex];
+  const won = G.tricksWon[playerIndex];
+  const need = bid - won;
+  const trickPos = G.currentTrick.length;
+  const posNames = ['leading', '2nd', '3rd', '4th', '5th', '6th'];
+  const goal = need > 0 ? `need ${need} more trick${need > 1 ? 's' : ''}` : need === 0 ? 'DONE, avoid winning extra tricks' : 'OVER bid, minimize further damage';
+  const history = (G.trickHistory || []).map((t, ti) => {
+    const leader = G.playerNames[t.leaderIndex != null ? t.leaderIndex : t.entries[0].playerIndex];
+    const plays = t.entries.map(e => `${G.playerNames[e.playerIndex]} ${cardToText(e.card)}`).join(', ');
+    return `Trick ${ti + 1} (led by ${leader}): ${plays} → won by ${G.playerNames[t.winnerIndex]}`;
+  });
+  const table = G.bids.map((_, i) => {
+    const row = jevPlayerRow(i);
+    row.isMe = i === playerIndex;
+    return row;
+  });
+  return {
+    game: 'Romanian Whist',
+    rules: {
+      followSuit: 'Must follow the led suit if possible.',
+      voidMustTrump: 'If void in led suit, MUST play trump if you have any.',
+      win: 'Highest card of led suit wins unless trumped — highest trump wins.',
+      scoring: jevScoringBlurb(),
+      trumpCardOutOfPlay: 'The face-up trump card is out of play.',
+    },
+    round: {
+      index: G.currentRoundIndex + 1,
+      of: G.roundSequence.length,
+      cardsPerPlayer: G.cardsPerPlayer,
+      trumpSuit: G.trumpSuit ? SUIT_NAMES[G.trumpSuit] : 'No Trump',
+      trumpCard: G.trumpCard ? `${cardToText(G.trumpCard)} (OUT OF PLAY)` : 'none',
+    },
+    me: {
+      name: G.playerNames[playerIndex],
+      hand: G.hands[playerIndex].map(cardToText),
+      bid,
+      tricksWon: won,
+      goal,
+    },
+    table,
+    trickHistory: history,
+    currentTrick: {
+      position: posNames[trickPos] || `${trickPos + 1}th`,
+      isLast: trickPos === G.numPlayers - 1,
+      ledSuit: ledSuit ? SUIT_NAMES[ledSuit] : null,
+      plays: G.currentTrick.map(e => ({ name: G.playerNames[e.playerIndex], card: cardToText(e.card) })),
+    },
+  };
+}
+
+
+// ─── Jev rich state: the features our PIMC bots use implicitly ───
+// (deck composition, unseen cards, masters, trumps out, fair share, opponent
+// track record). Same shape as test_jev.mjs --rich so evals stay comparable.
+function jevDeckInfo() {
+  const ranks = ALL_RANKS.slice(0, G.numPlayers * 2);
+  return {
+    totalCards: G.numPlayers * 8,
+    ranksInDeck: `${ranks.join(', ')} (${ranks.length} ranks per suit; ${ranks[ranks.length - 1]} is the LOWEST card in this deck)`,
+    playersCount: G.numPlayers,
+  };
+}
+
+function jevBySuit(cards) {
+  const out = {};
+  for (const s of SUITS) {
+    const cs = cards.filter(c => c.suit === s).sort((a, b) => RANK_VALUE[b.rank] - RANK_VALUE[a.rank]);
+    if (cs.length) out[SUIT_NAMES[s]] = cs.map(c => c.rank).join(' ');
+  }
+  return out;
+}
+
+function jevHandFeatures(playerIndex) {
+  const hand = G.hands[playerIndex];
+  const out = getCardsStillOut(hand);
+  const trumps = G.trumpSuit ? hand.filter(c => c.suit === G.trumpSuit) : [];
+  let masters = 0, probable = 0;
+  const voids = [];
+  for (const s of SUITS) {
+    const mine = hand.filter(c => c.suit === s).sort((a, b) => RANK_VALUE[b.rank] - RANK_VALUE[a.rank]);
+    const outS = out.filter(c => c.suit === s);
+    if (!mine.length) {
+      if (G.trumpSuit && s !== G.trumpSuit && trumps.length) voids.push(SUIT_NAMES[s]);
+      continue;
+    }
+    let k = 0;
+    for (const c of mine) { if (!outS.some(o => RANK_VALUE[o.rank] > RANK_VALUE[c.rank])) k++; else break; }
+    masters += k;
+    for (const c of mine.slice(k)) {
+      if (outS.filter(o => RANK_VALUE[o.rank] > RANK_VALUE[c.rank]).length === 1) probable++;
+    }
+  }
+  return {
+    sureWinners: masters,
+    probableWinners: probable,
+    trumpsInHand: trumps.length,
+    trumpsStillUnseen: G.trumpSuit ? out.filter(c => c.suit === G.trumpSuit).length : 0,
+    voidSuitsWithTrumpsToRuff: voids,
+    fairShareOfTricks: +(G.cardsPerPlayer / G.numPlayers).toFixed(2),
+    handBySuit: jevBySuit(hand),
+    unseenCardsBySuit: jevBySuit(out),
+    unseenCount: out.length,
+  };
+}
+
+function jevOpponentHistory() {
+  const rows = [];
+  for (let i = 0; i < G.numPlayers; i++) {
+    const s = G.opponentStats && G.opponentStats[i];
+    if (!s || !s.bids) continue;
+    rows.push({
+      name: G.playerNames[i],
+      roundsBid: s.bids,
+      madeRate: +(s.made / s.bids).toFixed(2),
+      avgOverUnder: +(((s.wonSum || 0) - (s.bidSum || 0)) / s.bids).toFixed(2),
+    });
+  }
+  return rows;
+}
+
+function enrichJevBidState(playerIndex, st) {
+  st.deck = jevDeckInfo();
+  st.analysis = jevHandFeatures(playerIndex);
+  const placed = G.bids.filter(b => b !== null);
+  const sum = placed.reduce((a, b) => a + b, 0);
+  st.bidding = {
+    sumOfBidsSoFar: sum,
+    tricksAvailable: G.cardsPerPlayer,
+    tricksNotYetClaimed: G.cardsPerPlayer - sum,
+    note: 'Total bids above tricks available means someone will fail; below means tricks are up for grabs.',
+  };
+  st.opponentTrackRecord = jevOpponentHistory();
+  return st;
+}
+
+function enrichJevPlayState(playerIndex, st) {
+  st.deck = jevDeckInfo();
+  st.analysis = jevHandFeatures(playerIndex);
+  const played = (G.trickHistory || []).length;
+  st.round.tricksPlayed = played;
+  st.round.tricksRemaining = G.cardsPerPlayer - played;
+  const need = G.bids[playerIndex] - G.tricksWon[playerIndex];
+  st.me.tricksStillNeeded = need;
+  st.me.mustWinEveryRemainingTrick = need > 0 && need === G.cardsPerPlayer - played;
+  st.me.mustLoseEveryRemainingTrick = need <= 0;
+  st.opponentTrackRecord = jevOpponentHistory();
+  return st;
+}
+
+async function callJevAPI(state, questions) {
+  const url = jevUrl();
+  if (!url) return null;
+  try {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 4000);
+    const resp = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      signal: controller.signal,
+      body: JSON.stringify({ state, model: TYPESAFE_MODEL, questions }),
+    });
+    clearTimeout(timeoutId);
+    if (!resp.ok) {
+      const err = await resp.text().catch(() => '');
+      console.warn('Jev API', resp.status, err.slice(0, 300));
+      return null;
+    }
+    return await resp.json();
+  } catch (e) {
+    console.warn('Jev API error', e);
+    return null;
+  }
+}
+
+function jevFallbackBid(playerIndex) {
+  const prev = G.playerNames[playerIndex];
+  G.playerNames[playerIndex] = 'Grok';
+  try { return computeAIBid(playerIndex); }
+  finally { G.playerNames[playerIndex] = prev; }
+}
+
+function jevFallbackCard(playerIndex, legalMoves, ledSuit) {
+  const prev = G.playerNames[playerIndex];
+  G.playerNames[playerIndex] = 'Grok';
+  try { return chooseAICard(playerIndex, legalMoves, ledSuit); }
+  finally { G.playerNames[playerIndex] = prev; }
+}
+
+function noteJevSource(playerIndex, source) {
+  _jevMode = source;
+  if (!G.decisionSource) G.decisionSource = {};
+  G.decisionSource[playerIndex] = source;
+}
+
+async function jevComputeBid(playerIndex) {
+  const cpp = G.cardsPerPlayer;
+  const { valid, forbidden } = getValidBids(cpp, G.bids, isLastBidder());
+  const criteria = {};
+  for (const b of valid) {
+    criteria[String(b)] = b === 0 ? 'Bid zero tricks (nil)' : `Bid exactly ${b} trick${b === 1 ? '' : 's'}`;
+  }
+  const data = await callJevAPI(enrichJevBidState(playerIndex, buildJevBidState(playerIndex, valid, forbidden)), {
+    bid: {
+      type: 'choice',
+      instructions: 'Choose the bid that maximizes my expected round score. Hit the bid exactly. Never pick a forbidden last-bidder value. If last to bid, use already-placed bids. Prefer a bid I can actually make over an ambitious one.',
+      criteria,
+    },
+  });
+  const choice = data && data.answers && data.answers.bid && data.answers.bid.choice;
+  const bid = parseInt(choice, 10);
+  if (Number.isInteger(bid) && valid.includes(bid)) {
+    noteJevSource(playerIndex, 'jev-api');
+    console.log('Jev bid', bid, data.answers.bid.probabilities, 'conf', data.answers.bid.confidence);
+    return constrainBid(bid, bid, cpp);
+  }
+  noteJevSource(playerIndex, 'pimc');
+  console.warn('Jev bid fallback to Grok PIMC', choice);
+  return jevFallbackBid(playerIndex);
+}
+
+async function jevChooseCard(playerIndex, legalMoves, ledSuit) {
+  if (legalMoves.length === 1) { noteJevSource(playerIndex, 'auto'); return legalMoves[0]; }
+  const criteria = {};
+  for (const c of legalMoves) criteria[cardId(c)] = describeJevCard(c, playerIndex, ledSuit);
+  const data = await callJevAPI(enrichJevPlayState(playerIndex, buildJevPlayState(playerIndex, legalMoves, ledSuit)), {
+    card: {
+      type: 'choice',
+      instructions: 'Which legal card should I play to maximize my expected round score? If I still need tricks, win when it is cheap and likely. If I have already made my bid, dump a loser and do not take extras. Last to play: use perfect information — cheapest winner or safest dump.',
+      criteria,
+    },
+  });
+  const choice = data && data.answers && data.answers.card && data.answers.card.choice;
+  const card = legalMoves.find(c => cardId(c) === choice);
+  if (card) {
+    noteJevSource(playerIndex, 'jev-api');
+    console.log('Jev play', choice, data.answers.card.probabilities, 'conf', data.answers.card.confidence);
+    return card;
+  }
+  noteJevSource(playerIndex, 'pimc');
+  console.warn('Jev play fallback to Grok PIMC', choice);
+  return jevFallbackCard(playerIndex, legalMoves, ledSuit);
+}
+
 // ─── Game State ───
 let G = {};
 let autoPlayTimer = null;
@@ -1323,9 +1675,19 @@ function logRoundStart() {
   }
 }
 
+function logDecisionSource(playerIndex) {
+  const style = getStyle(playerIndex);
+  if (style === 'jev') return _jevMode;
+  if (style === 'gemini') return _geminiMode === 'api' ? 'gemini-api' : 'algo';
+  if (playerIndex === 0) return 'human';
+  return style || 'algo';
+}
+
 function logBid(playerIndex, bid) {
   if (!G.gameLog || !G.gameLog._currentRound) return;
   G.gameLog._currentRound.bids[playerIndex] = bid;
+  const sources = G.gameLog._currentRound.bidSources || (G.gameLog._currentRound.bidSources = {});
+  sources[playerIndex] = logDecisionSource(playerIndex);
 }
 
 function logPlay(playerIndex, card) {
@@ -1339,6 +1701,7 @@ function logPlay(playerIndex, card) {
     bid: G.bids[playerIndex],
     tricksWon: G.tricksWon[playerIndex],
     tricksNeeded: G.bids[playerIndex] - G.tricksWon[playerIndex],
+    source: logDecisionSource(playerIndex),
   });
 }
 
@@ -1546,6 +1909,19 @@ function applyGeminiSetting() {
   if (toggle && !toggle.checked) window._geminiApiKey = null;
 }
 
+function onJevToggle() {
+  const on = document.getElementById('jev-toggle').checked;
+  const hint = document.getElementById('jev-hint');
+  if (hint) hint.style.display = on ? 'block' : 'none';
+  window._includeJev = on;
+  localStorage.setItem('wist-include-jev', on ? '1' : '0');
+}
+
+function applyJevSetting() {
+  const toggle = document.getElementById('jev-toggle');
+  window._includeJev = toggle ? !!toggle.checked : window._includeJev !== false;
+}
+
 function onScoringToggle() {
   const on = document.getElementById('geometric-toggle').checked;
   document.getElementById('geometric-hint').style.display = on ? 'block' : 'none';
@@ -1564,6 +1940,7 @@ function startGame(numPlayers) {
   applyCodexSetting();
   applyGrokSetting();
   applyGeminiSetting();
+  applyJevSetting();
   applyScoringSetting();
   // Randomize opponents each game
   const opponents = pickOpponents(numPlayers - 1);
@@ -1689,14 +2066,14 @@ function processAIBid() {
   if (G.phase !== 'bidding') return;
   const p = G.currentBidderIndex;
   if (p === 0) return;
-  if (getStyle(p) === 'gemini') {
-    geminiComputeBid(p).then(bid => {
-      if (G.phase !== 'bidding' || G.currentBidderIndex !== p) return;
-      placeBid(p, bid);
-    });
-  } else {
-    placeBid(p, computeAIBid(p));
-  }
+  const style = getStyle(p);
+  const apply = bid => {
+    if (G.phase !== 'bidding' || G.currentBidderIndex !== p) return;
+    placeBid(p, bid);
+  };
+  if (style === 'gemini') geminiComputeBid(p).then(apply);
+  else if (style === 'jev') jevComputeBid(p).then(apply);
+  else placeBid(p, computeAIBid(p));
 }
 
 // ═══════════════════════════════════════════════════════════════════
@@ -2341,7 +2718,7 @@ function codexOneCardWinProb(playerIndex) {
     for (let player = 0; player < G.numPlayers; player++) {
       if (player === playerIndex || G.bids[player] === null) continue;
       const profile = PLAYERS[G.playerNames[player]];
-      if (!profile || profile.style === 'gemini' || profile.style === 'codex') continue;
+      if (!profile || profile.style === 'gemini' || profile.style === 'codex' || profile.style === 'jev') continue;
       const noise = profile.noise || 0.1;
       const estimate = compute1CardWinProb(seatCards[player], G.numPlayers, G.trumpSuit);
       const pOne = Math.max(0, Math.min(1, (estimate + noise / 2 - 0.5) / noise));
@@ -2916,20 +3293,29 @@ function clearAutoPlay() {
   }
 }
 
+function applyAIPlay(p, card) {
+  if (G.phase !== 'playing' || currentPlayerToAct() !== p) return;
+  const hand = G.hands[p];
+  const inHand = card && hand.some(c => c.rank === card.rank && c.suit === card.suit);
+  if (!inHand) {
+    const ledSuit = G.currentTrick.length > 0 ? G.currentTrick[0].card.suit : null;
+    const legal = getLegalMoves(hand, ledSuit, G.trumpSuit);
+    if (!legal.length) return;
+    card = legal.length === 1 ? legal[0] : chooseAICard(p, legal, ledSuit);
+  }
+  playCard(p, card);
+}
+
 function processAIPlay() {
   if (G.phase !== 'playing') return;
   const p = currentPlayerToAct();
   if (p === 0) return;
   const ledSuit = G.currentTrick.length > 0 ? G.currentTrick[0].card.suit : null;
   const legal = getLegalMoves(G.hands[p], ledSuit, G.trumpSuit);
-  if (getStyle(p) === 'gemini') {
-    geminiChooseCard(p, legal, ledSuit).then(card => {
-      if (G.phase !== 'playing') return;
-      playCard(p, card);
-    });
-  } else {
-    playCard(p, chooseAICard(p, legal, ledSuit));
-  }
+  const style = getStyle(p);
+  if (style === 'gemini') geminiChooseCard(p, legal, ledSuit).then(card => applyAIPlay(p, card));
+  else if (style === 'jev') jevChooseCard(p, legal, ledSuit).then(card => applyAIPlay(p, card));
+  else playCard(p, chooseAICard(p, legal, ledSuit));
 }
 
 // ═══════════════════════════════════════════════════════════════════
@@ -3298,6 +3684,8 @@ function endRound() {
     // Track opponent bidding accuracy
     if (G.opponentStats[p]) {
       G.opponentStats[p].bids++;
+      G.opponentStats[p].bidSum = (G.opponentStats[p].bidSum || 0) + bid;
+      G.opponentStats[p].wonSum = (G.opponentStats[p].wonSum || 0) + won;
       if (won === bid) G.opponentStats[p].made++;
     }
   }
@@ -3459,6 +3847,10 @@ function renderScoreboard() {
     const face = p === 0 ? '🐺' : getFace(fullName);
     const name = mobile ? fullName.slice(0, 3) : fullName;
     html += `${face}${name}:${G.scores[p]}`;
+    if (getStyle(p) === 'jev' && G.decisionSource && G.decisionSource[p]) {
+      const src = G.decisionSource[p];
+      html += `<span class="bid-info" title="last Jev decision: ${src}">${src === 'jev-api' ? ' ∵' : src === 'pimc' ? ' ⚠' : ''}</span>`;
+    }
     if (G.bids[p] !== null) {
       html += `<span class="bid-info"> ${G.biddingComplete ? G.tricksWon[p] : G.bids[p]}`;
       if (G.biddingComplete) html += `/${G.bids[p]}`;
@@ -3809,6 +4201,20 @@ window.addEventListener('DOMContentLoaded', () => {
     const tg = document.getElementById('gemini-toggle');
     const ki = document.getElementById('gemini-key');
     if (tg && ki) { tg.checked = true; ki.value = savedGeminiKey; onGeminiToggle(); }
+  }
+
+  const urlJev = params.get('jev');
+  const savedJevPref = localStorage.getItem('wist-include-jev');
+  const includeJev = urlJev === '0' || urlJev === 'off' ? false
+    : urlJev === '1' || urlJev === 'on' ? true
+    : savedJevPref === null ? true : savedJevPref === '1';
+  window._includeJev = includeJev && jevConfigured();
+  const jevRow = document.getElementById('jev-toggle-row');
+  const jevTg = document.getElementById('jev-toggle');
+  if (jevRow && jevTg) {
+    jevRow.style.display = jevConfigured() ? 'block' : 'none';
+    jevTg.checked = window._includeJev;
+    if (jevTg.checked) onJevToggle();
   }
   const autoPlayers = parseInt(params.get('players'));
   const autoCards = parseInt(params.get('cards'));

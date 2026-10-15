@@ -10,3 +10,9 @@ __pycache__/
 # Local logs / experiment output
 *.log
 CLAUDE.md
+
+# Local secrets — never commit
+.env
+.env.*
+!.env.example
+local-secrets.js
