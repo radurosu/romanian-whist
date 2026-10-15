@@ -1,4 +1,4 @@
-const CACHE = 'wist-v24';
+const CACHE = 'wist-v25';
 const ASSETS = ['./', './index.html', './multiplayer.html', './manifest.json', './icon-180.png'];
 
 self.addEventListener('install', event => {
@@ -37,6 +37,17 @@ self.addEventListener('fetch', event => {
       }).catch(() =>
         caches.match(bare).then(cached => cached || caches.match('./index.html'))
       )
+    );
+    return;
+  }
+
+  // Google Fonts: cache on first use so the table keeps its typefaces offline.
+  if (/^https:\/\/fonts\.(googleapis|gstatic)\.com\//.test(req.url)) {
+    event.respondWith(
+      caches.open(CACHE).then(cache => cache.match(req).then(hit => hit || fetch(req).then(res => {
+        if (res.ok || res.type === 'opaque') cache.put(req, res.clone());
+        return res;
+      })))
     );
     return;
   }
