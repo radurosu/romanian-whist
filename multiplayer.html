@@ -1081,6 +1081,20 @@ const GROK_CFG = {
   spiteBonus: 2.0,
 };
 
+// Named players v2 (Viktor, Sasha, Sniper, Katya, Tempo2). Bids: PIMC with a
+// per-hand-size lean (kappa: points per bid level added to the simulated value,
+// calibrated in the arena so bids land on the tricks actually taken), forced
+// last bids decided by simulated value, Codex's one-card solver. Play: Grok's
+// in-trick opponent model and exact endgame. `lean` keeps each personality.
+const NAMED_CFG = {
+  kappa: {   // arena-calibrated: 1,200 games per mode vs Codex/Grok/named
+    linear:    { 2: 1.73, 3: 1.97, 4: 1.69, 5: 1.49, 6: 1.33, 7: 0.67, 8: 0.65 },
+    geometric: { 2: 1.63, 3: 1.90, 4: 1.84, 5: 1.53, 6: 1.25, 7: 0.03, 8: -0.15 },
+  },
+  lean: { void: 0, tempo: 0, sniper: 0, precision: 0 },
+  oneCardThreshold: 0.44,
+};
+
 function pickOpponents(count) {
   const rest = ALL_OPPONENTS.filter(n => n !== 'Codex' && n !== 'Grok').sort(() => Math.random() - 0.5);
   return ['Codex', 'Grok', ...rest].slice(0, count);
@@ -1096,11 +1110,11 @@ let PLAYER_NAMES_MAP = {
 const PLAYERS = {
   'Codex':  { style: 'codex',     face: '⌘', noise: 0 },
   'Grok':   { style: 'grok',      face: '🜲', noise: 0.06 },
-  'Viktor': { style: 'void',      face: '🐉', noise: 0.10 },
-  'Sasha':  { style: 'tempo',     face: '⚡', noise: 0.12 },
-  'Sniper': { style: 'sniper',    face: '🎯', noise: 0.08 },
-  'Katya':  { style: 'precision', face: '🦊', noise: 0.08 },
-  'Tempo2': { style: 'tempo',     face: '🔥', noise: 0.15 },
+  'Viktor': { style: 'void',      face: '🐉', noise: 0.10, v2: true },
+  'Sasha':  { style: 'tempo',     face: '⚡', noise: 0.12, v2: true },
+  'Sniper': { style: 'sniper',    face: '🎯', noise: 0.08, v2: true },
+  'Katya':  { style: 'precision', face: '🦊', noise: 0.08, v2: true },
+  'Tempo2': { style: 'tempo',     face: '🔥', noise: 0.15, v2: true },
 };
 function getFace(name) { return (PLAYERS[name]||{}).face||'🃏'; }
 function getPlayer(playerIndex) {
@@ -2001,7 +2015,7 @@ function grokEndgameChooseCard(playerIndex, legalMoves) {
 function pimcChooseCard(playerIndex, legalMoves, numSims) {
   if (legalMoves.length === 1) return legalMoves[0];
 
-  if (getStyle(playerIndex) === 'grok' &&
+  if ((getStyle(playerIndex) === 'grok' || getPlayer(playerIndex).v2) &&
       G.hands[playerIndex].length <= GROK_CFG.endgameMaxCards) {
     return grokEndgameChooseCard(playerIndex, legalMoves);
   }
@@ -2013,6 +2027,7 @@ function pimcChooseCard(playerIndex, legalMoves, numSims) {
   const alreadyMade = G.tricksWon[playerIndex] >= (G.bids[playerIndex] || 0);
   const spite = alreadyMade ? findSpiteTarget(playerIndex) : undefined;
   const isCodex = getStyle(playerIndex) === 'codex';
+  const smartTrick = isCodex || !!getPlayer(playerIndex).v2;
 
   for (let sim = 0; sim < numSims; sim++) {
     const sampled = isCodex
@@ -2065,7 +2080,7 @@ function pimcChooseCard(playerIndex, legalMoves, numSims) {
           }
           const needMore = tw[cur] < (G.bids[cur] || 0);
           let pick;
-          if(isCodex){
+          if(smartTrick){
             const curB=curTrick.reduce((b,t)=>cardBeats(t.card,b.card,ls)?t:b);
             const wins=legal.filter(c=>cardBeats(c,curB.card,ls));
             const isLast=curTrick.length===G.numPlayers-1;
@@ -2113,16 +2128,18 @@ function pimcChooseCard(playerIndex, legalMoves, numSims) {
   return bestCard;
 }
 
-function pimcBid(playerIndex, numSims) {
+function pimcBid(playerIndex, numSims, kappa = 0) {
   const hand = G.hands[playerIndex];
   const cpp = G.cardsPerPlayer;
   const scores = {};
   for (let b = 0; b <= cpp; b++) scores[b] = 0;
   const isCodex=getStyle(playerIndex)==='codex';
+  let weightSum = 0;
 
   for (let sim = 0; sim < numSims; sim++) {
     const sampled=isCodex?codexSampleWorld(hand,playerIndex):{hands:sampleOpponentHands(hand,playerIndex),weight:1};
     const oppHands=sampled.hands;
+    weightSum += sampled.weight;
 
     const allHands = [];
     for (let i = 0; i < G.numPlayers; i++) {
@@ -2149,11 +2166,27 @@ function pimcBid(playerIndex, numSims) {
     }
   }
 
+  // Best average score (+ kappa per bid level, see NAMED_CFG)
+  const ev = {};
   let bestBid = 0, bestScore = -Infinity;
   for (let b = 0; b <= cpp; b++) {
-    if (scores[b] > bestScore) { bestScore = scores[b]; bestBid = b; }
+    ev[b] = weightSum > 0 ? scores[b] / weightSum : 0;
+    if (ev[b] + kappa * b > bestScore) { bestScore = ev[b] + kappa * b; bestBid = b; }
   }
+  pimcBid.lastEV = ev;
   return bestBid;
+}
+
+// Last bidder whose pick is the forbidden total: take the neighbour the
+// simulation values more (the old rule always went up, overbidding the table).
+function constrainBidEV(bid, cpp, ev, kappa) {
+  if (!isLastBidder()) return bid;
+  const sum = G.bids.reduce((a, b) => a + (b ?? 0), 0);
+  if (sum + bid !== cpp) return bid;
+  const lo = bid - 1, hi = bid + 1;
+  if (lo < 0) return hi;
+  if (hi > cpp) return lo;
+  return (ev[hi] + kappa * hi) > (ev[lo] + kappa * lo) ? hi : lo;
 }
 
 // ═══════════════════════════════════════════════════════════════════
@@ -2168,9 +2201,9 @@ function computeAIBid(playerIndex) {
   let estimate = 0;
 
   if (cpp === 1) {
-    if(style==='codex'){
+    if(style==='codex'||player.v2){
       estimate=codexOneCardWinProb(playerIndex);
-      return constrainBid(estimate>CODEX_CFG.oneCardThreshold?1:0,estimate,cpp);
+      return constrainBid(estimate>(player.v2?NAMED_CFG.oneCardThreshold:CODEX_CFG.oneCardThreshold)?1:0,estimate,cpp);
     }
     estimate = compute1CardWinProb(hand[0], G.numPlayers, G.trumpSuit);
     estimate += (Math.random() - 0.5) * player.noise;
@@ -2194,6 +2227,10 @@ function computeAIBid(playerIndex) {
   // PIMC bidding — bias & aggr tuned from 50k-game optimization
   if ((style === 'void' || style === 'tempo' || style === 'sniper' || style === 'precision' || style === 'grok' || style === 'codex') && cpp >= 2) {
     const sims=style==='codex'?CODEX_CFG.bidSims:(style==='grok'?GROK_CFG.bidSims:(style==='tempo'?60:80));
+    if (player.v2) {
+      const k = ((player.kappa || NAMED_CFG.kappa)[G.scoringMode === 'geometric' ? 'geometric' : 'linear'][cpp] || 0) + (NAMED_CFG.lean[style] || 0);
+      return constrainBidEV(pimcBid(playerIndex, sims, k), cpp, pimcBid.lastEV, k);
+    }
     const biasMap={void:0.229,tempo:0.020,sniper:0.070,precision:0.165,grok:GROK_CFG.bias,codex:0};
     const aggrMap={void:1.00,tempo:1.02,sniper:1.00,precision:0.98,grok:GROK_CFG.aggr,codex:1};
     const bias = biasMap[style] || 0;
