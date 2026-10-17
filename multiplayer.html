@@ -2809,9 +2809,10 @@ function endRound() {
 }
 
 // ─── Fast play: make the human's forced moves automatically ───
-// Only exact cases: the one legal bid, the one playable card, or playable
-// cards that are interchangeable (same suit, nothing that can still be
-// played - or is lying in this trick - ranks between them).
+// Only exact cases that need no memory of earlier tricks: the one legal bid,
+// the one playable card, or playable cards touching in rank (9-8-7). Gaps are
+// never filled in from cards already played - that would be counting cards
+// for the player.
 let autoBidTimer = null;
 function fastPlayOn() { return !!window._fastPlay; }
 function setFastPlay(on) {
@@ -2819,18 +2820,16 @@ function setFastPlay(on) {
   try { localStorage.setItem('wist-fast-play', on ? '1' : '0'); } catch (e) {}
   document.querySelectorAll('.fast-toggle').forEach(el => { el.checked = !!on; });
 }
-function interchangeable(legal, hand) {
+function interchangeable(legal) {
   if (legal.length < 2) return legal.length === 1;
   const suit = legal[0].suit;
   if (legal.some(c => c.suit !== suit)) return false;
   const ranks = legal.map(c => RANK_VALUE[c.rank]);
-  const lo = Math.min(...ranks), hi = Math.max(...ranks);
-  const blockers = getCardsStillOut(hand).concat(G.currentTrick.map(e => e.card));
-  return !blockers.some(c => c.suit === suit && RANK_VALUE[c.rank] > lo && RANK_VALUE[c.rank] < hi);
+  return Math.max(...ranks) - Math.min(...ranks) === legal.length - 1;
 }
 function autoPlayChoice(legal, hand) {
   if (legal.length === 1) return legal[0];
-  if (!fastPlayOn() || !interchangeable(legal, hand)) return null;
+  if (!fastPlayOn() || !interchangeable(legal)) return null;
   return legal.reduce((a, b) => RANK_VALUE[b.rank] < RANK_VALUE[a.rank] ? b : a);
 }
 function autoBidChoice() {
