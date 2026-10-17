@@ -274,7 +274,15 @@ button:disabled { cursor: default; }
 }
 .tb-btn:hover { background: rgba(0,0,0,.32); }
 .tb-btn.warn { border-color: rgba(255,143,128,.5); color: var(--bust); }
-@media (max-width: 380px) { .tb-mode { display: none; } #topbar { gap: 9px; } }
+.tb-btn.icon { width: 36px; padding: 0; position: relative; font-size: 16px; }
+@media (max-width: 380px) {
+  .tb-mode { display: none; }
+  .tb-row { gap: 7px; }
+  .tb-round { font-size: 16px; }
+  .tb-btn { padding: 0 11px; }
+  .tb-btn.icon { width: 32px; padding: 0; }
+}
+@media (max-width: 340px) { .tb-lbl { display: none; } .tb-row { gap: 6px; } }
 @media (min-width: 900px) and (min-height: 700px) {
   .seat { min-width: 104px; max-width: 150px; padding: 7px 11px 8px; }
   .seat .nm { font-size: 16px; }
@@ -804,11 +812,21 @@ try {
 // ─── Sound Engine (Web Audio API synth) ───
 const AudioCtx = window.AudioContext || window.webkitAudioContext;
 let audioCtx = null;
+// Mute: remembered per device; every sound goes through playTone/playNoise
+let soundMuted = false;
+try { soundMuted = localStorage.getItem('wist-muted') === '1'; } catch (e) {}
+function toggleMute() {
+  soundMuted = !soundMuted;
+  try { localStorage.setItem('wist-muted', soundMuted ? '1' : '0'); } catch (e) {}
+  if (audioCtx) (soundMuted ? audioCtx.suspend() : audioCtx.resume()).catch(() => {});
+  if (G && G.roundSequence) renderTopBar();
+}
 function ensureAudio() {
   if (!audioCtx) audioCtx = new AudioCtx();
 }
 
 function playTone(freq, duration, type = 'sine', vol = 0.15, detune = 0) {
+  if (soundMuted) return;
   ensureAudio();
   const osc = audioCtx.createOscillator();
   const gain = audioCtx.createGain();
@@ -826,6 +844,7 @@ function playTone(freq, duration, type = 'sine', vol = 0.15, detune = 0) {
 // Filtered noise — real card texture (broadband, not pure tones).
 // filterFreqEnd: optional sweep for air/swoosh (Hz at end of envelope).
 function playNoise(duration, vol, filterType, filterFreq, q = 0.8, filterFreqEnd = null) {
+  if (soundMuted) return;
   ensureAudio();
   const sr = audioCtx.sampleRate;
   const len = Math.max(1, Math.floor(sr * duration));
@@ -4004,9 +4023,10 @@ function renderTopBar() {
     : `Underbid by ${cpp - sum}: tricks are up for grabs`;
   document.getElementById('topbar').innerHTML = '<div class="tb-row">'
     + `<span class="tb-round">Round ${G.currentRoundIndex + 1}<small>/${G.roundSequence.length}</small></span>`
-    + `<span class="tb-stat" title="${title}">Bids <b class="${cls}">${sum}</b>/${cpp}</span>`
+    + `<span class="tb-stat" title="${title}"><span class="tb-lbl">Bids </span><b class="${cls}">${sum}</b>/${cpp}</span>`
     + (G.scoringMode === 'geometric' ? '<span class="tb-mode">Geometric</span>' : '')
     + '<span class="tb-spacer"></span>'
+    + `<button class="tb-btn icon" onclick="toggleMute()" aria-label="${soundMuted ? 'Turn sound on' : 'Mute'}" title="${soundMuted ? 'Sound off' : 'Sound on'}">${soundMuted ? '🔇' : '🔊'}</button>`
     + '<button class="tb-btn" onclick="showHistory()">Score sheet</button>'
     + '</div>' + standingsHTML();
 }
