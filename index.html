@@ -3337,6 +3337,8 @@ function getLegalMoves(hand, ledSuit, trumpSuit) {
 }
 
 function playCard(playerIndex, card) {
+  // One card per player per trick, whatever calls us (taps, timers, actions)
+  if (G.currentTrick.length >= G.numPlayers || G.currentTrick.some(e => e.playerIndex === playerIndex)) return;
   clearAutoPlay();
   const idx = G.hands[playerIndex].findIndex(c => c.rank === card.rank && c.suit === card.suit);
   if (idx === -1) return;
@@ -3373,6 +3375,10 @@ function scheduleNextPlay() {
 
 function currentPlayerToAct() {
   if (G.currentTrick.length === 0) return G.trickLeaderIndex;
+  // A full trick is waiting to be resolved: nobody's turn. (Without this the
+  // turn wrapped back to the leader, whose cards lit up and could be played
+  // as an extra card in the same trick.)
+  if (G.currentTrick.length >= G.numPlayers) return -1;
   return nextPlayer(G.currentTrick[G.currentTrick.length - 1].playerIndex);
 }
 
@@ -3413,7 +3419,7 @@ function applyAIPlay(p, card) {
 function processAIPlay() {
   if (G.phase !== 'playing') return;
   const p = currentPlayerToAct();
-  if (p === 0) return;
+  if (p <= 0) return;
   const ledSuit = G.currentTrick.length > 0 ? G.currentTrick[0].card.suit : null;
   const legal = getLegalMoves(G.hands[p], ledSuit, G.trumpSuit);
   const style = getStyle(p);
@@ -3767,7 +3773,7 @@ function resolveTrick() {
 
   setTimeout(() => {
     G.currentTrick = [];
-    if (G.hands[0].length === 0) {
+    if (G.hands.every(h => !h || h.length === 0)) {
       endRound();
     } else {
       G.phase = 'playing';
@@ -4009,6 +4015,9 @@ function renderActionBar() {
       + `<div class="bid-row" style="--cols:${cols};--nb:${nb}">${btns}</div></div>`;
   } else if (G.phase === 'bidding') {
     bar.innerHTML = `<span class="status-text"><span class="who">${playerLabel(G.currentBidderIndex)}</span> is bidding</span>`;
+  } else if (G.phase === 'playing' && G.currentTrick.length >= G.numPlayers) {
+    const w = currentWinner().playerIndex;
+    bar.innerHTML = `<span class="status-text">${w === ME ? 'You take the trick' : `<span class="who">${playerLabel(w)}</span> takes the trick`}</span>`;
   } else if (G.phase === 'playing' && currentPlayerToAct() === ME) {
     const led = G.currentTrick.length ? G.currentTrick[0].card.suit : null;
     const hand = G.hands[ME];
