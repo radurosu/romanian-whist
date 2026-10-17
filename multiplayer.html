@@ -1065,7 +1065,7 @@ const SUITS = ['spades','hearts','diamonds','clubs'];
 const RANK_VALUE = {A:14,K:13,Q:12,J:11,'10':10,'9':9,'8':8,'7':7,'6':6,'5':5,'4':4,'3':3,'2':2};
 const SUIT_SYMBOL = {spades:'\u2660',hearts:'\u2665',diamonds:'\u2666',clubs:'\u2663'};
 const SUIT_COLOR = {spades:'black',hearts:'red',diamonds:'red',clubs:'black'};
-const ALL_OPPONENTS = ['Codex','Grok','Viktor','Sasha','Sniper','Katya','Tempo2'];
+const ALL_OPPONENTS = ['Codex','Grok','Viktor','Sasha','Sniper','Katya','Spite'];
 
 const CODEX_CFG = {
   oneCardSims:512, oneCardThreshold:0.44, bidSims:72, playSims:72,
@@ -1124,7 +1124,8 @@ const PLAYERS = {
   'Sasha':  { style: 'tempo',     face: '⚡', noise: 0.12, v2: true },
   'Sniper': { style: 'sniper',    face: '🎯', noise: 0.08, v2: true },
   'Katya':  { style: 'precision', face: '🦊', noise: 0.08, v2: true },
-  'Tempo2': { style: 'tempo',     face: '🔥', noise: 0.15, v2: true },
+  'Tempo2': { style: 'tempo',     face: '🔥', noise: 0.15, v2: true }, // retired; resumes old saves
+  'Spite':  { style: 'spite',     face: '😈', noise: 0.08, v2: true },
 };
 function getFace(name) { return (PLAYERS[name]||{}).face||'🃏'; }
 function getPlayer(playerIndex) {
@@ -1944,12 +1945,37 @@ function codexOneCardWinProb(playerIndex){
 }
 
 // Grok true endgame (≤2 cards) under sampled worlds
+// Spite: scores a simulated round as its own points minus a share of every
+// opponent's points, weighted by how much that opponent threatens it in the
+// standings (leaders and close rivals count most, players far behind barely
+// count). Breaking a big contract - a geometric 5-bid is worth 20 to its owner -
+// is worth giving up some of its own. Active from the first card, not only
+// after making its own bid.
+const SPITE_CFG = { weight: 0.5, scale: 20, min: 0.25, max: 2 };
+function spiteThreat(me, i) {
+  const gap = (G.scores[i] || 0) - (G.scores[me] || 0); // > 0: they are ahead of Spite
+  return Math.max(SPITE_CFG.min, Math.min(SPITE_CFG.max, 1 + gap / SPITE_CFG.scale));
+}
+function spiteSimScore(playerIndex, tricksWon, bids) {
+  let sc = scoreRound(tricksWon[playerIndex], bids[playerIndex] || 0);
+  for (let i = 0; i < bids.length; i++) {
+    if (i === playerIndex || bids[i] === null || bids[i] === undefined) continue;
+    sc -= SPITE_CFG.weight * spiteThreat(playerIndex, i) * scoreRound(tricksWon[i], bids[i]);
+  }
+  return sc;
+}
+// Value of a finished endgame line for the searching player
+function endgameValue(tw, bids, me, spite) {
+  if (getStyle(me) === 'spite') return spiteSimScore(me, tw, bids);
+  let sc = scoreRound(tw[me], bids[me] || 0);
+  if (spite !== undefined && tw[spite] !== (bids[spite] || 0)) sc += GROK_CFG.spiteBonus;
+  return sc;
+}
+
 function grokEndgameSearch(hands, bids, tw, trumpSuit, leader, numPlayers, trick, me, spite) {
   const anyLeft = hands.some(h => h.length > 0);
   if (!anyLeft && trick.length === 0) {
-    let sc = scoreRound(tw[me], bids[me] || 0);
-    if (spite !== undefined && tw[spite] !== (bids[spite] || 0)) sc += GROK_CFG.spiteBonus;
-    return { score: sc, tw };
+    return { score: endgameValue(tw, bids, me, spite), tw };
   }
   if (trick.length === numPlayers) {
     const ls = trick[0].card.suit;
@@ -1974,7 +2000,7 @@ function grokEndgameSearch(hands, bids, tw, trumpSuit, leader, numPlayers, trick
       if (trumps.length > 0) legal = trumps;
     }
   }
-  if (!legal.length) return { score: scoreRound(tw[me], bids[me] || 0), tw };
+  if (!legal.length) return { score: endgameValue(tw, bids, me, spite), tw };
   let bestScore = -Infinity, bestTw = tw;
   for (const card of legal) {
     const h2 = hands.map(h => h.slice());
@@ -1985,9 +2011,7 @@ function grokEndgameSearch(hands, bids, tw, trumpSuit, leader, numPlayers, trick
     const val = cur === me ? res.score : scoreRound(res.tw[cur], bids[cur] || 0);
     if (val > bestScore) { bestScore = val; bestTw = res.tw; }
   }
-  let sc = scoreRound(bestTw[me], bids[me] || 0);
-  if (spite !== undefined && bestTw[spite] !== (bids[spite] || 0)) sc += GROK_CFG.spiteBonus;
-  return { score: sc, tw: bestTw };
+  return { score: endgameValue(bestTw, bids, me, spite), tw: bestTw };
 }
 
 function grokEndgameChooseCard(playerIndex, legalMoves) {
@@ -2038,6 +2062,7 @@ function pimcChooseCard(playerIndex, legalMoves, numSims) {
   const alreadyMade = G.tricksWon[playerIndex] >= (G.bids[playerIndex] || 0);
   const spite = alreadyMade ? findSpiteTarget(playerIndex) : undefined;
   const isCodex = getStyle(playerIndex) === 'codex';
+  const isSpite = getStyle(playerIndex) === 'spite';
   const smartTrick = isCodex || !!getPlayer(playerIndex).v2;
 
   for (let sim = 0; sim < numSims; sim++) {
@@ -2071,8 +2096,8 @@ function pimcChooseCard(playerIndex, legalMoves, numSims) {
         tw[best.playerIndex]++;
         leader = best.playerIndex;
         const result = simPlayOut(allHands, G.bids, tw, G.trumpSuit, leader, G.numPlayers, spite);
-        let sc = isCodex ? codexSimScore(playerIndex,result,G.bids) : simScore(playerIndex,result,G.bids);
-        if(spite!==undefined&&result[spite]!==G.bids[spite])sc+=isCodex?CODEX_CFG.spiteBonus:2.0;
+        let sc = isCodex ? codexSimScore(playerIndex,result,G.bids) : isSpite ? spiteSimScore(playerIndex,result,G.bids) : simScore(playerIndex,result,G.bids);
+        if(!isSpite&&spite!==undefined&&result[spite]!==G.bids[spite])sc+=isCodex?CODEX_CFG.spiteBonus:2.0;
         scores[card.rank + card.suit] += sampled.weight*sc;
       } else {
         const nextP = (playerIndex + 1) % G.numPlayers;
@@ -2122,8 +2147,8 @@ function pimcChooseCard(playerIndex, legalMoves, numSims) {
         leader = best.playerIndex;
 
         const result = simPlayOut(allHands, G.bids, tw, G.trumpSuit, leader, G.numPlayers, spite);
-        let sc=isCodex?codexSimScore(playerIndex,result,G.bids):simScore(playerIndex,result,G.bids);
-        if(spite!==undefined&&result[spite]!==G.bids[spite])sc+=isCodex?CODEX_CFG.spiteBonus:2.0;
+        let sc=isCodex?codexSimScore(playerIndex,result,G.bids):isSpite?spiteSimScore(playerIndex,result,G.bids):simScore(playerIndex,result,G.bids);
+        if(!isSpite&&spite!==undefined&&result[spite]!==G.bids[spite])sc+=isCodex?CODEX_CFG.spiteBonus:2.0;
         scores[card.rank + card.suit]+=sampled.weight*sc;
       }
     }
@@ -2236,7 +2261,7 @@ function computeAIBid(playerIndex) {
   // PIMC bidding for all main styles (multi-card rounds)
   // Bias corrects for sim playout underestimating real trick-taking
   // PIMC bidding — bias & aggr tuned from 50k-game optimization
-  if ((style === 'void' || style === 'tempo' || style === 'sniper' || style === 'precision' || style === 'grok' || style === 'codex') && cpp >= 2) {
+  if ((style === 'void' || style === 'tempo' || style === 'sniper' || style === 'precision' || style === 'spite' || style === 'grok' || style === 'codex') && cpp >= 2) {
     const sims=style==='codex'?CODEX_CFG.bidSims:(style==='grok'?GROK_CFG.bidSims:(style==='tempo'?60:80));
     if (player.v2) {
       const k = ((player.kappa || NAMED_CFG.kappa)[G.scoringMode === 'geometric' ? 'geometric' : 'linear'][cpp] || 0) + (NAMED_CFG.lean[style] || 0);
@@ -2465,7 +2490,7 @@ function chooseAICard(playerIndex, legalMoves, ledSuit) {
   const style = getStyle(playerIndex);
 
   // PIMC play for all main AI styles (Grok: higher sims + endgame inside pimcChooseCard)
-  if(style==='void'||style==='tempo'||style==='sniper'||style==='precision'||style==='grok'||style==='codex'){
+  if(style==='void'||style==='tempo'||style==='sniper'||style==='precision'||style==='spite'||style==='grok'||style==='codex'){
     const sims=style==='codex'?CODEX_CFG.playSims:(style==='grok'?GROK_CFG.playSims:(style==='tempo'?40:80));
     return pimcChooseCard(playerIndex, legalMoves, sims);
   }
