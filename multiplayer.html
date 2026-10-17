@@ -846,6 +846,10 @@ table.score-sheet {
         <input type="checkbox" id="geometric-toggle" onchange="onScoringToggle()">
         <span><b>Geometric scoring</b><small id="geometric-hint" style="display:none">Made bid B scores 5 + B(B+1)/2. Missing by d costs d(d+1)/2.</small></span>
       </label>
+      <label class="opt">
+        <input type="checkbox" class="fast-toggle" onchange="setFastPlay(this.checked)">
+        <span><b>Fast play</b><small>Makes your forced moves for you: the only allowed bid, the only playable card, and interchangeable cards like 9-8-7 of a suit.</small></span>
+      </label>
     </div>
     <p id="mp-setup-msg" class="form-msg"></p>
     <div class="setup-actions">
@@ -880,6 +884,12 @@ table.score-sheet {
     <label class="field">Your name
       <input id="join-name-input" class="line-input" type="text" maxlength="16" placeholder="Name" autocomplete="off">
     </label>
+    <div class="opts" style="margin-top:0">
+      <label class="opt">
+        <input type="checkbox" class="fast-toggle" onchange="setFastPlay(this.checked)">
+        <span><b>Fast play</b><small>Makes your forced moves for you: the only allowed bid, the only playable card, and interchangeable cards like 9-8-7 of a suit.</small></span>
+      </label>
+    </div>
     <div class="setup-actions">
       <button class="btn-ink" id="join-btn" onclick="mpCompleteJoin()">Join the table</button>
     </div>
@@ -1355,6 +1365,7 @@ function placeBid(playerIndex, bid) {
 
 function scheduleBidding(seat) {
   if(isAIPlayer(seat)) setTimeout(processAIBid, 600);
+  else if(seat===MP.mySeat) checkAutoBid();
   // human turn (local or remote): just wait for input/action
 }
 
@@ -2422,14 +2433,15 @@ function checkAutoPlay() {
   if(autoPlayTimer) return; // already scheduled
   if(G.phase!=='playing'||currentPlayerToAct()!==MP.mySeat) return;
   const ledSuit=G.currentTrick.length>0?G.currentTrick[0].card.suit:null;
-  const legal=getLegalMoves(G.hands[MP.mySeat],ledSuit,G.trumpSuit);
-  if(legal.length===1){
+  const card=autoPlayChoice(getLegalMoves(G.hands[MP.mySeat],ledSuit,G.trumpSuit),G.hands[MP.mySeat]);
+  if(card){
     renderAll();
     autoPlayTimer=setTimeout(()=>{
+      autoPlayTimer=null;
       sfxAutoPlay();
-      if(MP.active&&!MP.isHost) mpSendAction({type:'play',rank:legal[0].rank,suit:legal[0].suit});
-      else playCard(MP.mySeat,legal[0]);
-    },2000);
+      if(MP.active&&!MP.isHost) mpSendAction({type:'play',rank:card.rank,suit:card.suit});
+      else playCard(MP.mySeat,card);
+    },500);
   }
 }
 
@@ -2771,6 +2783,46 @@ function endRound() {
   showRoundResult(roundScores);
 }
 
+// ─── Fast play: make the human's forced moves automatically ───
+// Only exact cases: the one legal bid, the one playable card, or playable
+// cards that are interchangeable (same suit, nothing that can still be
+// played - or is lying in this trick - ranks between them).
+let autoBidTimer = null;
+function fastPlayOn() { return !!window._fastPlay; }
+function setFastPlay(on) {
+  window._fastPlay = !!on;
+  try { localStorage.setItem('wist-fast-play', on ? '1' : '0'); } catch (e) {}
+  document.querySelectorAll('.fast-toggle').forEach(el => { el.checked = !!on; });
+}
+function interchangeable(legal, hand) {
+  if (legal.length < 2) return legal.length === 1;
+  const suit = legal[0].suit;
+  if (legal.some(c => c.suit !== suit)) return false;
+  const ranks = legal.map(c => RANK_VALUE[c.rank]);
+  const lo = Math.min(...ranks), hi = Math.max(...ranks);
+  const blockers = getCardsStillOut(hand).concat(G.currentTrick.map(e => e.card));
+  return !blockers.some(c => c.suit === suit && RANK_VALUE[c.rank] > lo && RANK_VALUE[c.rank] < hi);
+}
+function autoPlayChoice(legal, hand) {
+  if (legal.length === 1) return legal[0];
+  if (!fastPlayOn() || !interchangeable(legal, hand)) return null;
+  return legal.reduce((a, b) => RANK_VALUE[b.rank] < RANK_VALUE[a.rank] ? b : a);
+}
+function autoBidChoice() {
+  if (!fastPlayOn()) return null;
+  const { valid } = getValidBids(G.cardsPerPlayer, G.bids, isLastBidder());
+  return valid.length === 1 ? valid[0] : null;
+}
+function checkAutoBid() {
+  if (autoBidTimer || G.phase !== 'bidding' || G.currentBidderIndex !== MP.mySeat) return;
+  const bid = autoBidChoice();
+  if (bid === null) return;
+  autoBidTimer = setTimeout(() => {
+    autoBidTimer = null;
+    if (G.phase === 'bidding' && G.currentBidderIndex === MP.mySeat) humanBid(bid);
+  }, 500);
+}
+
 // ─── Rendering ───
 // The table is a round table seen from your chair: you sit at the bottom
 // (270°), the next player in turn order to your left, and so on clockwise.
@@ -2937,13 +2989,13 @@ function renderHand() {
   const led = G.currentTrick.length ? G.currentTrick[0].card.suit : null;
   const myTurn = G.phase === 'playing' && currentPlayerToAct() === M();
   const legal = myTurn ? getLegalMoves(hand, led, G.trumpSuit) : [];
-  const auto = myTurn && legal.length === 1;
+  const autoCard = myTurn ? autoPlayChoice(legal, hand) : null;
   const mid = (hand.length - 1) / 2;
   el.style.setProperty('--n', Math.max(1, hand.length));
   el.innerHTML = hand.map((card, i) => {
     const ok = legal.some(c => c.rank === card.rank && c.suit === card.suit);
     let cls = myTurn ? (ok ? 'playable' : 'illegal') : '';
-    if (auto && ok) cls += ' auto-play-glow';
+    if (autoCard && autoCard.rank === card.rank && autoCard.suit === card.suit) cls += ' auto-play-glow';
     const act = myTurn && ok ? `onclick="humanPlayCard('${card.rank}','${card.suit}')"` : (myTurn ? 'aria-disabled="true"' : '');
     return cardHTML(card, cls, 'button', `${act} style="--k:${(i - mid).toFixed(2)}" aria-label="${cardName(card)}${myTurn && !ok ? ', cannot be played now' : ''}"`);
   }).join('');
@@ -2962,6 +3014,10 @@ function renderActionBar() {
   if (G.phase === 'bidding' && G.currentBidderIndex === M()) {
     const cpp = G.cardsPerPlayer;
     const { valid, forbidden } = getValidBids(cpp, G.bids, isLastBidder());
+    if (fastPlayOn() && valid.length === 1) {
+      bar.innerHTML = `<span class="status-text you">Only one bid is allowed: ${valid[0]}. Bidding it.</span>`;
+      return;
+    }
     const nb = cpp + 1;
     const cols = nb <= 6 ? nb : Math.ceil(nb / 2);
     let btns = '';
@@ -2990,13 +3046,15 @@ function renderActionBar() {
     const hand = G.hands[M()];
     const legal = getLegalMoves(hand, led, G.trumpSuit);
     let msg;
+    const autoCard = autoPlayChoice(legal, hand);
     if (legal.length === 1) msg = 'Only one card can be played. Playing it.';
+    else if (autoCard) msg = `Your cards here are interchangeable. Playing the ${autoCard.rank}${suitTxt(autoCard.suit)}.`;
     else if (!led) msg = 'Your lead';
     else if (hand.some(c => c.suit === led)) msg = `Your turn: follow ${suitTxt(led)}`;
     else if (G.trumpSuit && hand.some(c => c.suit === G.trumpSuit)) msg = `No ${suitTxt(led)} left: you must trump ${suitTxt(G.trumpSuit)}`;
     else msg = `No ${suitTxt(led)} left: play any card`;
     bar.innerHTML = `<span class="status-text you">${msg}</span>`
-      + (legal.length > 1 ? '<button class="hint-btn" onclick="toggleSuggestion()">Hint</button>' : '');
+      + (!autoCard ? '<button class="hint-btn" onclick="toggleSuggestion()">Hint</button>' : '');
   } else if (G.phase === 'playing') {
     bar.innerHTML = `<span class="status-text"><span class="who">${playerLabel(currentPlayerToAct())}</span> to play</span>`;
   } else if (G.phase === 'trickResult') {
@@ -3241,6 +3299,7 @@ function resumeGame() {
   document.getElementById('game-screen').classList.add('active');
     renderAll();
   if(G.phase==='bidding'&&G.currentBidderIndex!==0)setTimeout(processAIBid,600);
+  else if(G.phase==='bidding')checkAutoBid();
   else if(G.phase==='playing'&&G.currentTrick.length===G.numPlayers)setTimeout(resolveTrick,500);
   else if(G.phase==='playing'&&currentPlayerToAct()!==0)setTimeout(processAIPlay,500);
   else if(G.phase==='playing'&&currentPlayerToAct()===0)checkAutoPlay();
@@ -3518,8 +3577,9 @@ function mpListenGameState() {
     G.hands[MP.mySeat]=myHand;
     if(G.phase!=='roundResult'&&G.phase!=='gameOver'){document.querySelectorAll('#round-overlay,#gameover-overlay').forEach(el=>el.remove());clearAutoPlay();}
     renderAll();
-    // Trigger auto-play / player turn for remote clients
+    // Trigger auto-play / auto-bid / player turn for remote clients
     if(G.phase==='playing' && currentPlayerToAct()===MP.mySeat) checkAutoPlay();
+    if(G.phase==='bidding' && G.currentBidderIndex===MP.mySeat) checkAutoBid();
   });
 }
 
@@ -3654,6 +3714,9 @@ function mpTryHostReconnect() {
 // ─── Boot ───
 window.addEventListener('DOMContentLoaded',()=>{
   const params=new URLSearchParams(location.search);
+  // Fast play preference is shared with the solo page (?fast=1 overrides)
+  const urlFast=params.get('fast');
+  setFastPlay(urlFast==='1'||urlFast==='on'?true:urlFast==='0'||urlFast==='off'?false:localStorage.getItem('wist-fast-play')==='1');
   // Scoring preference is shared with the solo page (?scoring=geometric overrides)
   const savedScoring=params.get('scoring')||localStorage.getItem('wist-scoring-mode');
   if(savedScoring==='geometric'){
