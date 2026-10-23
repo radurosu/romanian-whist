@@ -4686,7 +4686,10 @@ function computeBidCheck() {
 }
 function ensureBidCheck() {
   const r = G.currentRoundIndex, checks = bidChecks();
-  if (!(r in checks)) checks[r] = computeBidCheck();
+  if (!(r in checks)) {
+    // analysis must never stand between a player and their bid
+    try { checks[r] = computeBidCheck(); } catch (e) { checks[r] = null; console.warn('Bid check failed', e); }
+  }
   return checks[r];
 }
 function scheduleBidCheck() {

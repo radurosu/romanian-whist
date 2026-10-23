@@ -3591,7 +3591,10 @@ function computeBidCheck() {
 }
 function ensureBidCheck() {
   const r = G.currentRoundIndex, checks = bidChecks();
-  if (!(r in checks)) checks[r] = computeBidCheck();
+  if (!(r in checks)) {
+    // analysis must never stand between a player and their bid
+    try { checks[r] = computeBidCheck(); } catch (e) { checks[r] = null; console.warn('Bid check failed', e); }
+  }
   return checks[r];
 }
 function scheduleBidCheck() {
@@ -4256,6 +4259,9 @@ function fixStateArrays(s) {
   s.currentTrick = fbToIndexedArray(s.currentTrick);
   s.playedCards  = fbToIndexedArray(s.playedCards);
   s.fullDeck     = fbToIndexedArray(s.fullDeck);
+  // Firebase drops empty objects: no known voids arrives as no knownVoids at all
+  s.knownVoids   = s.knownVoids || {};
+  for (let i = 0; i < n; i++) s.knownVoids[i] = s.knownVoids[i] || {};
   s.roundSequence= fbToIndexedArray(s.roundSequence);
   s.roundHistory = fbToIndexedArray(s.roundHistory).map(h => {
     if (!h) return h;
