@@ -648,6 +648,10 @@ button:disabled { cursor: default; }
 .bc-chips .you { color: var(--ink); text-decoration: underline; text-underline-offset: 3px; }
 .bc-chips .best { color: var(--ink); font-weight: 700; }
 .foot-links .btn-ink { font-size: 17px; color: #fff; text-decoration: none; }
+.lang-switch { display: flex; width: fit-content; margin: -12px -6px 8px auto; border: 1.5px solid var(--ink-soft); border-radius: 999px; overflow: hidden; }
+.lang-switch button { font-size: 12px; font-weight: 700; letter-spacing: .04em; padding: 3px 10px; color: var(--ink); }
+.lang-switch button + button { border-left: 1px solid var(--grid); }
+.lang-switch button.on { background: var(--ink); color: #fff; }
 .foot-links button, .foot-links a { font-size: 14px; color: var(--ink-soft); text-decoration: underline; text-underline-offset: 3px; }
 
 table.score-sheet {
@@ -853,6 +857,7 @@ table.score-sheet {
 <!-- ══ Host a table ══ -->
 <div id="mp-setup-screen" class="full-screen">
   <div class="sheet setup-sheet">
+    <div class="lang-switch" role="group" aria-label="Language"><button data-lang="en" onclick="setLang('en')">EN</button><button data-lang="ro" onclick="setLang('ro')">RO</button></div>
     <h1>Play online</h1>
     <p class="lede">Open a table and send the link to friends. The computer takes any seat nobody fills.</p>
     <label class="field">Your name
@@ -876,7 +881,7 @@ table.score-sheet {
         <span><b>Fast play</b><small>Makes your forced moves for you: the only allowed bid, the only playable card, and interchangeable cards like 9-8-7 of a suit.</small></span>
       </label>
     </div>
-    <p id="mp-setup-msg" class="form-msg"></p>
+    <p id="mp-setup-msg" class="form-msg" data-no-i18n></p>
     <div class="setup-actions">
       <button class="btn-ink" id="mp-create-btn" onclick="mpCreateSession()" disabled>Open the table</button>
       <button class="link-ink" onclick="showSinglePlayerSetup()">Play solo instead</button>
@@ -887,14 +892,14 @@ table.score-sheet {
 <!-- ══ Lobby ══ -->
 <div id="lobby-screen" class="full-screen">
   <div class="sheet setup-sheet">
-    <h1>Table <span class="code" id="lobby-code"></span></h1>
+    <h1>Table <span class="code" id="lobby-code" data-no-i18n></span></h1>
     <p class="lede">Send this link to the people you want at the table.</p>
     <div class="lobby-link-row">
       <input id="lobby-link-input" class="lobby-link-input" readonly aria-label="Invite link">
       <button class="btn-line copy-btn" onclick="copyLobbyLink()">Copy link</button>
     </div>
-    <p class="mode-line" id="lobby-mode"></p>
-    <div class="lobby-players" id="lobby-players"></div>
+    <p class="mode-line" id="lobby-mode" data-no-i18n></p>
+    <div class="lobby-players" id="lobby-players" data-no-i18n></div>
     <p class="lobby-note">Open seats go to the computer when you start.</p>
     <button id="lobby-start-btn" class="btn-ink" onclick="mpHostStartGame()" disabled>Start the game</button>
   </div>
@@ -903,9 +908,10 @@ table.score-sheet {
 <!-- ══ Join ══ -->
 <div id="join-screen" class="full-screen">
   <div class="sheet setup-sheet">
-    <h1>Join table <span class="code" id="join-code-display"></span></h1>
+    <div class="lang-switch" role="group" aria-label="Language"><button data-lang="en" onclick="setLang('en')">EN</button><button data-lang="ro" onclick="setLang('ro')">RO</button></div>
+    <h1>Join table <span class="code" id="join-code-display" data-no-i18n></span></h1>
     <p class="lede">Romanian Whist: bid exactly the tricks you will take.</p>
-    <p class="mode-line" id="join-mode"></p>
+    <p class="mode-line" id="join-mode" data-no-i18n></p>
     <label class="field">Your name
       <input id="join-name-input" class="line-input" type="text" maxlength="16" placeholder="Name" autocomplete="off">
     </label>
@@ -918,7 +924,7 @@ table.score-sheet {
     <div class="setup-actions">
       <button class="btn-ink" id="join-btn" onclick="mpCompleteJoin()">Join the table</button>
     </div>
-    <div id="join-status" class="form-msg" role="status"></div>
+    <div id="join-status" class="form-msg" role="status" data-no-i18n></div>
   </div>
 </div>
 
@@ -936,7 +942,7 @@ table.score-sheet {
     </div>
     <p class="player-select-cap">Players, you included. Pick a number to deal.</p>
     <div class="setup-actions">
-      <div id="resume-slot"></div>
+      <div id="resume-slot" data-no-i18n></div>
       <button class="link-ink" onclick="showMultiplayerSetup()">Play online instead</button>
     </div>
   </div>
@@ -959,7 +965,7 @@ table.score-sheet {
 
 <!-- ══ Chat (online only, opened from the top bar) ══ -->
 <div id="chat-widget" role="dialog" aria-label="Table chat">
-  <div id="chat-messages"></div>
+  <div id="chat-messages" data-no-i18n></div>
   <div id="chat-input-row">
     <input id="chat-input" type="text" maxlength="200" placeholder="Write to the table" autocomplete="off">
     <button id="chat-send" onclick="mpSendChat()">Send</button>
@@ -986,6 +992,316 @@ const MP = {
   db: null, auth: null, uid: null,
   gameNo: 0   // rematches dealt at this table
 };
+
+const I18N_ROOTS = ["#mp-setup-screen", "#lobby-screen", "#join-screen", "#setup-screen", "#chat-widget"];
+// ─── Language ───
+// English is the source text and the lookup key; RO holds the Romanian. t()
+// looks a string up and fills its {slots}. The start screens switch EN/RO; the
+// choice is remembered on this device, and a first visit follows the
+// browser's language. Static page text is translated in place from the same
+// table (translateStatic), everything rendered later goes through t().
+let LANG = 'en';
+try { LANG = localStorage.getItem('wist-lang') || (/^ro\b/i.test(navigator.language || '') ? 'ro' : 'en'); } catch (e) {}
+function t(en, vars) {
+  const s = LANG === 'ro' && RO[en] != null ? RO[en] : en;
+  return vars ? s.replace(/\{(\w+)\}/g, (m, k) => k in vars ? vars[k] : m) : s;
+}
+// "1 card", "3 cards"; "1 carte", "3 cărți", "20 de cărți"
+function nOf(n, en1, enN, ro1, roN) {
+  if (LANG !== 'ro') return `${n} ${n === 1 ? en1 : enN}`;
+  return `${n} ${n === 1 ? ro1 : (n % 100 >= 20 || (n && n % 100 === 0) ? 'de ' : '') + roN}`;
+}
+function dec(x) { return LANG === 'ro' ? String(x).replace('.', ',') : String(x); }
+const RANK_NAMES_RO = { A: 'As', K: 'Rege', Q: 'Damă', J: 'Valet' };
+const SUIT_NAMES_RO = { spades: 'pică', hearts: 'cupă', diamonds: 'caro', clubs: 'treflă' };
+const enText = new WeakMap(), enAttrs = new WeakMap();
+function translateNode(el) {
+  for (const node of el.childNodes) {
+    if (node.nodeType === 3) {
+      if (!enText.has(node)) enText.set(node, node.nodeValue);
+      const en = enText.get(node), key = en.trim();
+      if (key) node.nodeValue = en.replace(key, t(key));
+    } else if (node.nodeType === 1 && !node.hasAttribute('data-no-i18n')) {
+      const saved = enAttrs.get(node) || {};
+      for (const a of ['placeholder', 'aria-label', 'title']) {
+        if (!(a in saved) && node.hasAttribute(a)) saved[a] = node.getAttribute(a);
+        if (a in saved) node.setAttribute(a, t(saved[a]));
+      }
+      enAttrs.set(node, saved);
+      translateNode(node);
+    }
+  }
+}
+let enTitle = null;
+function translateStatic() {
+  document.documentElement.lang = LANG;
+  if (enTitle === null) enTitle = document.title;
+  document.title = t(enTitle);
+  for (const sel of I18N_ROOTS) { const root = document.querySelector(sel); if (root) translateNode(root); }
+  document.querySelectorAll('.lang-switch button').forEach(b => {
+    b.classList.toggle('on', b.dataset.lang === LANG);
+    b.setAttribute('aria-pressed', String(b.dataset.lang === LANG));
+  });
+}
+function setLang(lang) {
+  LANG = lang === 'ro' ? 'ro' : 'en';
+  try { localStorage.setItem('wist-lang', LANG); } catch (e) {}
+  translateStatic();
+  onLangChange();
+}
+const RO = {
+  "You": "Tu",
+  "bidding…": "licitează…",
+  "No bid yet": "Încă n-a licitat",
+  "bid": "licitat",
+  "bid {bid}": "licitat {bid}",
+  "bid {bid}, took {won}": "licitat {bid}, luat {won}",
+  "Bids placed so far, out of the tricks this round": "Licitat până acum, din mâinile acestei runde",
+  "Overbid by {n}: someone has to miss": "Licitat peste cu {n}: cineva trebuie să cadă",
+  "Underbid by {n}: tricks are up for grabs": "Licitat sub cu {n}: rămân mâini de luat",
+  "Round {n}": "Runda {n}",
+  "Bids": "Licitat",
+  "Geometric": "Geometric",
+  "Turn sound on": "Pornește sunetul",
+  "Mute": "Oprește sunetul",
+  "Sound off": "Sunet oprit",
+  "Sound on": "Sunet pornit",
+  "Score sheet": "Foaia de scor",
+  "Sheet": "Foaia",
+  "Chat": "Chat",
+  "End": "Termină",
+  "End the game for everyone": "Termină jocul pentru toți",
+  "Standings": "Clasament",
+  "Gemini is offline; a built-in player stands in": "Gemini nu răspunde; joacă în locul lui un jucător din aplicație",
+  "Jev is offline; a built-in player stands in": "Jev nu răspunde; joacă în locul lui un jucător din aplicație",
+  "Dealer": "Împarte",
+  "Last trick": "Ultima mână",
+  "Trump card: {card}": "Atu: {card}",
+  "Trump": "Atu",
+  "No<br>trump": "Fără<br>atu",
+  ", cannot be played now": ", nu se poate juca acum",
+  "You deal": "Tu împarți",
+  "Only one bid is allowed: {bid}. Bidding it.": "O singură licitație e permisă: {bid}. Se licitează automat.",
+  "{n}, not allowed": "{n}, nepermis",
+  "Bid {n}": "Licitează {n}",
+  "{list}. Total {sum} of {cpp}.": "{list}. Total {sum} din {cpp}.",
+  "You bid first. {n} to take.": "Licitezi primul. {n} de luat.",
+  "You can't bid {f}: the total would be {cpp}.": "Nu poți licita {f}: totalul ar fi {cpp}.",
+  "Your bid": "Licitația ta",
+  "Hint": "Sugestie",
+  "{who} is bidding": "{who} licitează",
+  "You take the trick": "Tu iei mâna",
+  "{who} takes the trick": "{who} ia mâna",
+  "Only one card can be played. Playing it.": "O singură carte se poate juca. Se joacă automat.",
+  "Your cards here are interchangeable. Playing the {card}.": "Cărțile tale de aici sunt echivalente. Se joacă {card}.",
+  "Your lead": "Tu deschizi",
+  "Your turn: follow {suit}": "Rândul tău: răspunzi la {suit}",
+  "No {led} left: you must trump {trump}": "Nu mai ai {led}: trebuie să tai cu atu {trump}",
+  "No {led} left: play any card": "Nu mai ai {led}: joci orice carte",
+  "{who} to play": "Joacă {who}",
+  "Geometric scoring: a made bid B scores 5 + B(B+1)/2; missing by d costs d(d+1)/2.": "Punctaj geometric: o licitație B făcută aduce 5 + B(B+1)/2; o greșeală de d mâini costă d(d+1)/2.",
+  "Classic scoring: a made bid scores 5 + the bid; a miss costs 1 point per trick off.": "Punctaj clasic: o licitație făcută aduce 5 + licitația; când cazi, pierzi 1 punct pentru fiecare mână în plus sau în minus.",
+  "Geometric scoring: made bid B scores 5 + B(B+1)/2, missing by d costs d(d+1)/2.": "Punctaj geometric: licitația B făcută aduce 5 + B(B+1)/2, o greșeală de d mâini costă d(d+1)/2.",
+  "Classic scoring: made bid scores 5 + the bid, a miss costs 1 per trick off.": "Punctaj clasic: licitația făcută aduce 5 + licitația, o greșeală costă 1 punct pe mână.",
+  "Cards dealt": "Cărți împărțite",
+  "tricks taken / bid": "mâini luate / licitate",
+  "How the tricks went": "Cum au mers mâinile",
+  ", led": ", a deschis",
+  "trump {s}": "atu {s}",
+  "high {s}": "cea mai mare {s}",
+  "You took none, as bid: {pts}.": "N-ai luat nicio mână, cum ai licitat: {pts}.",
+  "You made {bid}: {pts}.": "Ai făcut {bid}: {pts}.",
+  "You took {won} on a bid of {bid}: {pts}.": "Ai luat {won} la licitația {bid}: {pts}.",
+  "Everyone else made theirs.": "Toți ceilalți și-au făcut licitația.",
+  "Missed: {list}.": "Au căzut: {list}.",
+  "You can no longer finish first, even with perfect rounds from here.": "Nu mai poți ieși pe primul loc, nici cu runde perfecte de aici încolo.",
+  "No human player can finish first any more, even with perfect rounds from here.": "Niciun jucător om nu mai poate ieși primul, nici cu runde perfecte de aici încolo.",
+  "You have clinched first place. Nobody can catch up, even with perfect rounds from here.": "Ți-ai asigurat locul întâi. Nimeni nu te mai poate prinde, nici cu runde perfecte de aici încolo.",
+  "{name} has clinched first place. Nobody can catch up, even with perfect rounds from here.": "{name} și-a asigurat locul întâi. Nimeni nu mai poate prinde din urmă, nici cu runde perfecte de aici încolo.",
+  "{s} trump": "atu {s}",
+  "no trump": "fără atu",
+  "See final scores": "Vezi scorul final",
+  "Play on": "Joacă mai departe",
+  "End game": "Termină jocul",
+  "Next round": "Runda următoare",
+  "Waiting for the host to show final scores…": "Așteptăm ca gazda să arate scorul final…",
+  "Waiting for the host to deal…": "Așteptăm ca gazda să împartă…",
+  "Bid check:": "Verificarea licitației:",
+  "The engine bids {pick} too.": "Și motorul licitează {pick}.",
+  "The engine bids {pick}; your {bid} gives up about {pts} points.": "Motorul licitează {pick}; cu {bid} pierzi cam {pts} puncte.",
+  "The engine slightly prefers {pick}; your {bid} is within a point.": "Motorul preferă puțin {pick}; {bid} e la mai puțin de un punct.",
+  "bid {b}: {v}": "licitat {b}: {v}",
+  "Expected points for each bid, as the engine saw your hand when you bid": "Punctele așteptate pentru fiecare licitație, așa cum vedea motorul cărțile tale când ai licitat",
+  "{flagged} of your {rounds} checked bids were over a point behind the engine's pick; about {pts} points in all.": "{flagged} din cele {rounds} licitații verificate au fost cu peste un punct sub alegerea motorului; cam {pts} puncte în total.",
+  "All {rounds} checked bids were within a point of the engine's pick.": "Toate cele {rounds} licitații verificate au fost la mai puțin de un punct de alegerea motorului.",
+  " and ": " și ",
+  "{names} tie at {n}": "{names}: egalitate la {n}",
+  "A shared win.": "O victorie împărțită.",
+  "You finish with {n}.": "Termini cu {n}.",
+  "You win with {n}": "Câștigi cu {n}",
+  "{name} is next with {n}.": "Urmează {name} cu {n}.",
+  "{name} wins with {n}": "Câștigă {name} cu {n}",
+  "You finish {place} with {n}.": "Termini pe locul {place} cu {n}.",
+  "Final standings": "Clasament final",
+  "Your stats": "Statisticile tale",
+  "Play again": "Încă un joc",
+  "Download game logs": "Descarcă jurnalele jocurilor",
+  "Back to the table": "Înapoi la masă",
+  "Loading…": "Se încarcă…",
+  "No games recorded yet.": "Niciun joc înregistrat încă.",
+  "Error downloading logs.": "Eroare la descărcarea jurnalelor.",
+  "Resume round {r} of {n}": "Continuă runda {r} din {n}",
+  "Try {card}.": "Încearcă {card}.",
+  "Tap it to play, or pick another card.": "Atinge-o ca s-o joci sau alege altă carte.",
+  "This is the highest {suit} left — a sure winner. Lead it now to secure a trick.": "E cea mai mare carte de {suit} rămasă — câștigă sigur. Deschide cu ea ca să-ți asiguri o mână.",
+  "Highest remaining in its suit — a sure trick. No higher card is out there.": "Cea mai mare rămasă în culoarea ei — o mână sigură. Nu mai e nicio carte mai mare.",
+  "You hold Ace-King of {suit}. Lead the Ace to cash it safely while you control the suit.": "Ai as-rege de {suit}. Deschide cu asul ca să-l încasezi sigur cât controlezi culoarea.",
+  "You need {n} more. Lead your strongest card to try to win.": "Îți mai trebuie {n}. Deschide cu cea mai tare carte ca să încerci să iei.",
+  "You've made your bid. Lead low to avoid winning: {card} is your safest lead.": "Ți-ai făcut licitația. Deschide mic ca să nu iei: {card} e deschiderea cea mai sigură.",
+  "You've made your bid. Lead your lowest card to minimise the chance of winning.": "Ți-ai făcut licitația. Deschide cu cea mai mică carte, ca să ai cele mai mici șanse să iei.",
+  "You're last to play. {card} is the cheapest card that beats {name}'s {top}.": "Joci ultimul. {card} e cea mai mică carte care bate {top} jucat de {name}.",
+  "This is the highest remaining in its suit — it can't be beaten. Play it to secure the trick.": "E cea mai mare rămasă în culoarea ei — nu poate fi bătută. Joac-o ca să iei mâna.",
+  "You need tricks and {n} can beat {name}. Play high to hold the lead.": "Ai nevoie de mâini și {n} pot bate ce a jucat {name}. Joacă mare ca să rămâi în față.",
+  "You can't beat {name}'s {top}. Dump your lowest card ({card}) to save better cards.": "Nu poți bate {top} jucat de {name}. Aruncă cea mai mică carte ({card}) ca să-ți păstrezi cărțile bune.",
+  "You've made your bid — don't win this! Play {card} (the highest card that still loses) to shed a dangerous card.": "Ți-ai făcut licitația — nu lua mâna asta! Joacă {card} (cea mai mare carte care tot pierde) ca să scapi de o carte periculoasă.",
+  "You're forced to win here. Play your lowest to minimise damage.": "Aici ești obligat să iei. Joacă cea mai mică, ca să limitezi paguba.",
+  "You have too many tricks. Play low and try to lose.": "Ai prea multe mâini. Joacă mic și încearcă să pierzi.",
+  "{card} is a high trump — near-certain trick": "{card} e atu mare — mână aproape sigură",
+  "{card} is a mid trump — likely trick": "{card} e atu mijlociu — mână probabilă",
+  "{card} is an Ace — strong winner": "{card} e as — carte puternică",
+  "{card} backed by Ace — solid": "{card} cu asul alături — solid",
+  "{card} without Ace — may lose to it": "{card} fără as — poate pierde în fața lui",
+  "{card} is a high trump": "{card} e atu mare",
+  "{card} is a mid trump": "{card} e atu mijlociu",
+  "{card} is an Ace": "{card} e as",
+  "{card} backed by Ace": "{card} cu asul alături",
+  "{card} without Ace": "{card} fără as",
+  "Void in {suit} — can trump in": "Nu ai {suit} — poți tăia cu atu",
+  "(adjusted to avoid forbidden bid)": "(ajustat ca să evite licitația interzisă)",
+  "Suggested bid:": "Licitație sugerată:",
+  "A weak hand. Bid low.": "Cărți slabe. Licitează mic.",
+  "Luck or skill? Replaying your cards with {bot} in your seat… {progress}": "Noroc sau pricepere? Rejucăm cărțile tale cu {bot} pe locul tău… {progress}",
+  "Your cards": "Cărțile tale",
+  "Your play": "Jocul tău",
+  "{bot} averaged {avg} with them; the table {table}": "{bot} a făcut în medie {avg} cu ele; masa, {table}",
+  "you {you} vs {bot}'s {avg}; one game swings ±{spread}": "tu {you}, {bot} {avg}; un singur joc variază cu ±{spread}",
+  "{bot} gained most on you in round {list}.": "{bot} a câștigat cel mai mult față de tine în runda {list}.",
+  "{bot} gained most on you in rounds {list}.": "{bot} a câștigat cel mai mult față de tine în rundele {list}.",
+  "{deal}: you {you}, {bot} {botpts}": "{deal}: tu {you}, {bot} {botpts}",
+  "{games} on this device.": "{games} pe acest dispozitiv.",
+  "All": "Toate",
+  "Solo": "Singur",
+  "Online": "Online",
+  "Both": "Ambele",
+  "Classic": "Clasic",
+  "classic": "clasic",
+  "geometric": "geometric",
+  "No games match these filters yet.": "Niciun joc nu se potrivește acestor filtre.",
+  "No finished games on this device yet. Your record starts with the next game you finish.": "Niciun joc terminat pe acest dispozitiv. Istoricul tău începe cu următorul joc pe care îl termini.",
+  "Games": "Jocuri",
+  "Won": "Câștigate",
+  "{games}; fair share {fair}": "{games}; media așteptată {fair}",
+  "Place": "Locul",
+  "average, of {n} players": "în medie, din {n} jucători",
+  "Last game": "Ultimul joc",
+  "Last {n} games": "Ultimele {n} jocuri",
+  "{place} of {n}, {score} points, {mode}": "{place} din {n}, {score} puncte, {mode}",
+  "Your place in each game, newest on the right.": "Locul tău în fiecare joc, cel mai recent în dreapta.",
+  "Bids by hand size": "Licitații după numărul de cărți",
+  "Cards": "Cărți",
+  "Rounds": "Runde",
+  "Made": "Făcute",
+  "Took − bid": "Luat − licitat",
+  "Points": "Puncte",
+  "<b>Bold</b>: you. Grey: the bots in the same games. Took − bid above zero means you take more tricks than you bid.": "<b>Îngroșat</b>: tu. Gri: boții din aceleași jocuri. Luat − licitat peste zero înseamnă că iei mai multe mâini decât licitezi.",
+  "Bidding last": "Ultimul la licitație",
+  "When you deal and bid last, with one total ruled out, you make {a} of your bids (bots {b}). From other seats: {c} (bots {d}).": "Când împarți și licitezi ultimul, cu un total interzis, îți faci {a} din licitații (boții {b}). De pe celelalte locuri: {c} (boții {d}).",
+  "Bid check": "Verificarea licitației",
+  "Over {bids} in {games}, your bids average {avg} points behind the engine's pick ({pergame} a game). {flagged} of bids were more than a point behind.": "În {bids} din {games}, licitațiile tale sunt în medie cu {avg} puncte sub alegerea motorului ({pergame} pe joc). {flagged} dintre licitații au fost cu peste un punct sub.",
+  "Luck vs skill": "Noroc sau pricepere",
+  "Over {games} with a bot in your seat: your cards averaged {cards} a game against the table, your play {play} a game against the bot{se}.": "În {games} cu un bot pe locul tău: cărțile tale au adus în medie {cards} pe joc față de masă, jocul tău {play} pe joc față de bot{se}.",
+  " (± {se}, one standard error)": " (± {se}, o eroare standard)",
+  "A single game swings about ±10 points, so give this a few more games before reading much into it.": "Un singur joc variază cu aproximativ ±10 puncte, așa că mai joacă câteva până să tragi concluzii.",
+  "Play above zero means you score more than a strong bot would with your exact cards.": "Joc peste zero înseamnă că faci mai multe puncte decât ar face un bot puternic cu exact cărțile tale.",
+  "Against each player": "Față de fiecare jucător",
+  "Player": "Jucător",
+  "You ahead": "Tu înainte",
+  "Margin": "Diferență",
+  "(person)": "(om)",
+  "You ahead: games where you finished above them. Margin: your score minus theirs, per game.": "Tu înainte: jocurile în care ai terminat peste ei. Diferență: scorul tău minus al lor, pe joc.",
+  "Back": "Înapoi",
+  "Language": "Limba",
+  "Romanian Whist": "Whist românesc",
+  "Romanian Whist — Online": "Whist românesc — online",
+  "Bid exactly the tricks you will take. Hands grow from one card to eight, then back.": "Licitezi exact câte mâini vei lua. Se joacă de la o carte la opt, apoi înapoi.",
+  "How many at the table?": "Câți sunteți la masă?",
+  "3 players": "3 jucători",
+  "4 players": "4 jucători",
+  "5 players": "5 jucători",
+  "6 players": "6 jucători",
+  "Players, you included. Pick a number to deal.": "Jucători, cu tine cu tot. Alege un număr și se împart cărțile.",
+  "takes a free seat": "ocupă un loc liber",
+  "Bid-conditioned Monte Carlo player, tournament tuned.": "Jucător Monte Carlo care ține cont de licitații, reglat în turnee.",
+  "Monte Carlo player with exact endgame search.": "Jucător Monte Carlo cu calcul exact la final.",
+  "plays with your API key": "joacă cu cheia ta API",
+  "Gemini API key": "Cheia API Gemini",
+  "The key stays in this browser.": "Cheia rămâne în acest browser.",
+  "(TypeSafe) takes a seat": "(TypeSafe) ocupă un loc",
+  "Runs through the local proxy. If the API is down, a Monte Carlo player stands in.": "Merge prin proxy-ul local. Dacă API-ul nu răspunde, joacă în loc un jucător Monte Carlo.",
+  "Geometric scoring": "Punctaj geometric",
+  "Made bid B scores 5 + B(B+1)/2. Missing by d costs d(d+1)/2.": "Licitația B făcută aduce 5 + B(B+1)/2. O greșeală de d mâini costă d(d+1)/2.",
+  "Fast play": "Joc rapid",
+  "Makes your forced moves for you: the only allowed bid, the only playable card, and interchangeable cards like 9-8-7 of a suit.": "Face în locul tău mutările forțate: singura licitație permisă, singura carte care se poate juca și cărțile echivalente, ca 9-8-7 din aceeași culoare.",
+  "Play online with friends": "Joacă online cu prietenii",
+  "Play online": "Joacă online",
+  "Open a table and send the link to friends. The computer takes any seat nobody fills.": "Deschide o masă și trimite linkul prietenilor. Calculatorul ia locurile pe care nu le ocupă nimeni.",
+  "Your name": "Numele tău",
+  "Name": "Nume",
+  "Players, you included.": "Jucători, cu tine cu tot.",
+  "Open the table": "Deschide masa",
+  "Play solo instead": "Joacă singur",
+  "Table": "Masa",
+  "Send this link to the people you want at the table.": "Trimite linkul celor pe care îi vrei la masă.",
+  "Invite link": "Link de invitație",
+  "Copy link": "Copiază linkul",
+  "Copied!": "Copiat!",
+  "Open seats go to the computer when you start.": "Locurile libere le ia calculatorul când începi.",
+  "Start the game": "Începe jocul",
+  "Join table": "Intră la masa",
+  "Romanian Whist: bid exactly the tricks you will take.": "Whist românesc: licitezi exact câte mâini vei lua.",
+  "Join the table": "Intră la masă",
+  "Play online instead": "Joacă online",
+  "Table chat": "Chatul mesei",
+  "Write to the table": "Scrie la masă",
+  "Send": "Trimite",
+  "open": "liber",
+  "host": "gazdă",
+  "joined": "a intrat",
+  "waiting": "așteaptă",
+  "Enter your name to join.": "Scrie-ți numele ca să intri.",
+  "Connecting…": "Se conectează…",
+  "No table with this code. Check the link.": "Nu există nicio masă cu acest cod. Verifică linkul.",
+  "This game has already started.": "Jocul a început deja.",
+  "Every seat is taken.": "Toate locurile sunt ocupate.",
+  "You are in. Waiting for the host to start.": "Ești la masă. Așteptăm ca gazda să înceapă.",
+  "That game has already started. Open your own table below.": "Jocul acela a început deja. Deschide-ți propria masă mai jos.",
+  "Game over": "Joc încheiat",
+  "The host ended the game.": "Gazda a încheiat jocul.",
+  "Back to the menu": "Înapoi la meniu",
+  "End the game for everyone at the table?": "Închei jocul pentru toată lumea de la masă?",
+  "Game over. Thanks for playing.": "Joc încheiat. Mulțumim că ai jucat.",
+  "New table": "Masă nouă",
+  "Rematch": "Revanșă",
+  "Deal now": "Împarte acum",
+  "Leave the table": "Pleacă de la masă",
+  "Rematch coming…": "Vine revanșa…",
+  "Rematch: waiting for {names}. Deal now and a bot takes the seat of anyone not back.": "Revanșă: îi așteptăm pe {names}. Dacă împarți acum, un bot ia locul celor care nu s-au întors.",
+  "{host} started a rematch: same seats and scoring. Dealing as soon as everyone is back.": "{host} a pornit o revanșă: aceleași locuri, același punctaj. Se împarte imediat ce s-au întors toți.",
+  "The host": "Gazda",
+  "Rematch dealt": "Revanșa a început",
+  "You were away when the rematch was dealt, so a bot took your seat.": "Nu erai aici când s-a împărțit revanșa, așa că un bot ți-a luat locul.",
+};
+translateStatic();
 
 // ─── Sound Engine (card-like: swoosh + snap + table / collect scrape) ───
 const AudioCtx = window.AudioContext || window.webkitAudioContext;
@@ -1263,18 +1579,18 @@ function downloadGameLogs() {
   }
   if(MP.db){
     const btn=document.getElementById('download-btn');
-    if(btn)btn.textContent='Loading…';
+    if(btn)btn.textContent=t('Loading…');
     MP.db.ref('gameLogs').orderByChild('timestamp').once('value').then(snap=>{
       const logs=[];
       snap.forEach(c=>{const v=c.val();if(v&&v.timestamp)logs.push(v);});
-      if(btn)btn.textContent='Download game logs';
-      if(!logs.length){alert('No games recorded yet.');return;}
+      if(btn)btn.textContent=t('Download game logs');
+      if(!logs.length){alert(t('No games recorded yet.'));return;}
       const blob=new Blob([JSON.stringify(logs,null,2)],{type:'application/json'});
       const url=URL.createObjectURL(blob);
       const a=document.createElement('a');a.href=url;a.download=`whist-games-${new Date().toISOString().slice(0,10)}.json`;a.click();
       URL.revokeObjectURL(url);
     }).catch(()=>{
-      if(btn)btn.textContent='Download game logs';
+      if(btn)btn.textContent=t('Download game logs');
       downloadLocalLogs();
     });
   } else {
@@ -1284,12 +1600,12 @@ function downloadGameLogs() {
 function downloadLocalLogs() {
   try{
     const logs=JSON.parse(localStorage.getItem('wist-game-logs')||'[]');
-    if(!logs.length){alert('No games recorded yet.');return;}
+    if(!logs.length){alert(t('No games recorded yet.'));return;}
     const blob=new Blob([JSON.stringify(logs,null,2)],{type:'application/json'});
     const url=URL.createObjectURL(blob);
     const a=document.createElement('a');a.href=url;a.download=`whist-games-${new Date().toISOString().slice(0,10)}.json`;a.click();
     URL.revokeObjectURL(url);
-  }catch(e){alert('Error downloading logs.');}
+  }catch(e){alert(t('Error downloading logs.'));}
 }
 
 function computeRoundSequence(n) {
@@ -2703,29 +3019,29 @@ function getSuggestion() {
       const ntWinners = sureWinners.filter(c => c.suit !== G.trumpSuit);
 
       if (ntWinners.length > 0) {
-        return { card: ntWinners[0], reason: `This is the highest remaining ${ntWinners[0].suit} — guaranteed winner. Lead it now to secure a trick.` };
+        return { card: ntWinners[0], reason: t('This is the highest {suit} left — a sure winner. Lead it now to secure a trick.', { suit: SUIT_SYMBOL[ntWinners[0].suit] }) };
       }
       if (sureWinners.length > 0) {
-        return { card: sureWinners[0], reason: `Highest remaining in its suit — a sure trick. No higher card is out there.` };
+        return { card: sureWinners[0], reason: t('Highest remaining in its suit — a sure trick. No higher card is out there.') };
       }
 
       for (const s of SUITS) {
         if (s === G.trumpSuit) continue;
         const sCards = nonTrump.filter(c => c.suit === s).sort((a,b) => RANK_VALUE[b.rank] - RANK_VALUE[a.rank]);
         if (sCards.length >= 2 && sCards[0].rank === 'A') {
-          return { card: sCards[0], reason: `You hold Ace-King of ${s}. Lead the Ace to cash it safely while you control the suit.` };
+          return { card: sCards[0], reason: t('You hold Ace-King of {suit}. Lead the Ace to cash it safely while you control the suit.', { suit: SUIT_SYMBOL[s] }) };
         }
       }
 
       const best = pickHighest(nonTrump.length > 0 ? nonTrump : legal);
-      return { card: best, reason: `You need ${stillNeeded} more trick${stillNeeded > 1 ? 's' : ''}. Lead your strongest card to try to win.` };
+      return { card: best, reason: t('You need {n} more. Lead your strongest card to try to win.', { n: nOf(stillNeeded, 'trick', 'tricks', 'mână', 'mâini') }) };
     } else {
       const nonTrump = legal.filter(c => c.suit !== G.trumpSuit);
       if (nonTrump.length > 0) {
         const low = pickLowest(nonTrump);
-        return { card: low, reason: `You've made your bid. Lead low to avoid winning — ${low.rank} of ${low.suit} is your safest lead.` };
+        return { card: low, reason: t("You've made your bid. Lead low to avoid winning: {card} is your safest lead.", { card: cardShort(low) }) };
       }
-      return { card: pickLowest(legal), reason: `You've made your bid. Lead your lowest card to minimise the chance of winning.` };
+      return { card: pickLowest(legal), reason: t("You've made your bid. Lead your lowest card to minimise the chance of winning.") };
     }
   }
 
@@ -2741,28 +3057,28 @@ function getSuggestion() {
     if (beaters.length > 0) {
       if (isLast) {
         const cheap = pickLowest(beaters);
-        return { card: cheap, reason: `You're last to play. ${cheap.rank} of ${cheap.suit} is the cheapest card that beats ${winnerName}'s ${winCard.rank}.` };
+        return { card: cheap, reason: t("You're last to play. {card} is the cheapest card that beats {name}'s {top}.", { card: cardShort(cheap), name: escHTML(winnerName), top: cardShort(winCard) }) };
       }
       const sure = beaters.filter(c => isHighestRemaining(c, hand));
       if (sure.length > 0) {
-        return { card: pickLowest(sure), reason: `This is the highest remaining in its suit — it can't be beaten. Play it to secure the trick.` };
+        return { card: pickLowest(sure), reason: t("This is the highest remaining in its suit — it can't be beaten. Play it to secure the trick.") };
       }
-      return { card: pickHighest(beaters), reason: `You need tricks and ${beaters.length} card${beaters.length > 1 ? 's' : ''} can beat ${winnerName}. Play high to hold the lead.` };
+      return { card: pickHighest(beaters), reason: t('You need tricks and {n} can beat {name}. Play high to hold the lead.', { n: nOf(beaters.length, 'card', 'cards', 'carte', 'cărți'), name: escHTML(winnerName) }) };
     }
     const dump = pickLowest(legal);
-    return { card: dump, reason: `You can't beat ${winnerName}'s ${winCard.rank}. Dump your lowest card (${dump.rank} of ${dump.suit}) to save better cards.` };
+    return { card: dump, reason: t("You can't beat {name}'s {top}. Dump your lowest card ({card}) to save better cards.", { name: escHTML(winnerName), top: cardShort(winCard), card: cardShort(dump) }) };
   }
 
   if (hasExact) {
     if (losers.length > 0) {
       const hi = pickHighest(losers);
-      return { card: hi, reason: `You've made your bid — don't win this! Play ${hi.rank} of ${hi.suit} (highest card that still loses) to shed a dangerous card.` };
+      return { card: hi, reason: t("You've made your bid — don't win this! Play {card} (the highest card that still loses) to shed a dangerous card.", { card: cardShort(hi) }) };
     }
-    return { card: pickLowest(legal), reason: `You're forced to win here. Play your lowest to minimise damage.` };
+    return { card: pickLowest(legal), reason: t("You're forced to win here. Play your lowest to minimise damage.") };
   }
 
   const low = pickLowest(losers.length > 0 ? losers : legal);
-  return { card: low, reason: `You have too many tricks. Play low and try to lose.` };
+  return { card: low, reason: t('You have too many tricks. Play low and try to lose.') };
 }
 
 let suggestionVisible=false;
@@ -2773,7 +3089,7 @@ function toggleSuggestion() {
   if(!suggestion) return;
   suggestionVisible=true;
   const sym=SUIT_SYMBOL[suggestion.card.suit];
-  document.getElementById('me-area').insertAdjacentHTML('beforeend',`<div id="suggestion-box"><span class="suggestion-card">Try ${suggestion.card.rank}${sym}.</span> ${suggestion.reason}<div class="suggestion-reason">Tap it to play, or pick another card.</div></div>`);
+  document.getElementById('me-area').insertAdjacentHTML('beforeend',`<div id="suggestion-box"><span class="suggestion-card">${t('Try {card}.', { card: suggestion.card.rank + sym })}</span> ${suggestion.reason}<div class="suggestion-reason">${t('Tap it to play, or pick another card.')}</div></div>`);
   document.querySelectorAll('#hand-area .card').forEach(el=>{
     if(el.dataset.rank===suggestion.card.rank&&el.dataset.suit===suggestion.card.suit)el.classList.add('suggested');
   });
@@ -2797,8 +3113,8 @@ function pickLowest(cards){return cards.reduce((b,c)=>RANK_VALUE[c.rank]<RANK_VA
 function trickWinReason(entries, winnerIdx, trumpSuit) {
   const ledSuit=entries[0].card.suit;
   const winCard=entries.find(e=>e.playerIndex===winnerIdx).card;
-  if(trumpSuit&&winCard.suit===trumpSuit&&ledSuit!==trumpSuit) return `trump ${SUIT_SYMBOL[trumpSuit]}`;
-  return `high ${SUIT_SYMBOL[ledSuit]}`;
+  if(trumpSuit&&winCard.suit===trumpSuit&&ledSuit!==trumpSuit) return t('trump {s}', { s: SUIT_SYMBOL[trumpSuit] });
+  return t('high {s}', { s: SUIT_SYMBOL[ledSuit] });
 }
 
 function resolveTrick() {
@@ -2908,10 +3224,13 @@ function seatGeom(p) {
   return { ux: f(Math.cos(a)), uy: f(-Math.sin(a)) };
 }
 
-function playerLabel(p) { return p === M() ? 'You' : escHTML(G.playerNames[p]); }
+function playerLabel(p) { return p === M() ? t('You') : escHTML(G.playerNames[p]); }
 function faceOf(p) { return p === M() ? '🐺' : (MP.active && !isAIPlayer(p) ? '🙂' : getFace(G.playerNames[p])); }
 function suitTxt(s) { return `<span class="suit ${SUIT_COLOR[s]}">${SUIT_SYMBOL[s]}</span>`; }
-function cardName(card) { return `${RANK_NAMES[card.rank]} of ${SUIT_NAMES[card.suit]}`; }
+function cardName(card) {
+  return LANG === 'ro' ? `${RANK_NAMES_RO[card.rank] || card.rank} de ${SUIT_NAMES_RO[card.suit]}` : `${RANK_NAMES[card.rank]} of ${SUIT_NAMES[card.suit]}`;
+}
+function cardShort(card) { return card.rank + SUIT_SYMBOL[card.suit]; }
 
 // Stable small tilt per card so a trick looks tossed onto the table, not gridded
 function cardTilt(card) {
@@ -2930,8 +3249,8 @@ function isActive(p) {
 function bidHTML(p) {
   const bid = G.bids[p];
   if (bid === null || bid === undefined) {
-    if (p !== M() && G.phase === 'bidding' && G.currentBidderIndex === p) return '<span class="bid thinking">bidding…</span>';
-    return '<span class="bid none" title="No bid yet"><small>bid</small><b>–</b></span>';
+    if (p !== M() && G.phase === 'bidding' && G.currentBidderIndex === p) return `<span class="bid thinking">${t('bidding…')}</span>`;
+    return `<span class="bid none" title="${t('No bid yet')}"><small>${t('bid')}</small><b>–</b></span>`;
   }
   const won = G.biddingComplete ? G.tricksWon[p] : 0;
   const state = !G.biddingComplete ? '' : won === bid ? 'made' : won > bid ? 'bust' : '';
@@ -2940,8 +3259,8 @@ function bidHTML(p) {
   for (let i = 0; i < count; i++) {
     pips += `<i class="pip ${i < Math.min(won, bid) ? 'won' : i < bid ? '' : 'over'}"></i>`;
   }
-  const label = G.biddingComplete ? `bid ${bid}, took ${won}` : `bid ${bid}`;
-  return `<span class="bid ${state}" title="${label}" aria-label="${label}"><small>bid</small><b>${bid}</b>`
+  const label = G.biddingComplete ? t('bid {bid}, took {won}', { bid, won }) : t('bid {bid}', { bid });
+  return `<span class="bid ${state}" title="${label}" aria-label="${label}"><small>${t('bid')}</small><b>${bid}</b>`
     + (pips ? `<span class="pips${count > 5 ? ' dense' : ''}">${pips}</span>` : '') + '</span>';
 }
 
@@ -2975,18 +3294,18 @@ function renderTopBar() {
   const sum = G.bids.reduce((a, b) => a + (b ?? 0), 0);
   const cpp = G.cardsPerPlayer;
   const cls = !G.biddingComplete ? '' : sum > cpp ? 'over' : 'under';
-  const title = !G.biddingComplete ? 'Bids placed so far, out of the tricks this round'
-    : sum > cpp ? `Overbid by ${sum - cpp}: someone has to miss`
-    : `Underbid by ${cpp - sum}: tricks are up for grabs`;
+  const title = !G.biddingComplete ? t('Bids placed so far, out of the tricks this round')
+    : sum > cpp ? t('Overbid by {n}: someone has to miss', { n: sum - cpp })
+    : t('Underbid by {n}: tricks are up for grabs', { n: cpp - sum });
   document.getElementById('topbar').innerHTML = '<div class="tb-row">'
-    + `<span class="tb-round">Round ${G.currentRoundIndex + 1}<small>/${G.roundSequence.length}</small></span>`
-    + `<span class="tb-stat" title="${title}"><span class="tb-lbl">Bids </span><b class="${cls}">${sum}</b>/${cpp}</span>`
-    + (G.scoringMode === 'geometric' ? '<span class="tb-mode">Geometric</span>' : '')
+    + `<span class="tb-round">${t('Round {n}', { n: G.currentRoundIndex + 1 })}<small>/${G.roundSequence.length}</small></span>`
+    + `<span class="tb-stat" title="${title}"><span class="tb-lbl">${t('Bids')} </span><b class="${cls}">${sum}</b>/${cpp}</span>`
+    + (G.scoringMode === 'geometric' ? `<span class="tb-mode">${t('Geometric')}</span>` : '')
     + '<span class="tb-spacer"></span>'
-    + (MP.active ? `<button class="tb-btn icon" onclick="toggleChat()" aria-label="Chat" title="Chat">💬${MP.chatUnread ? '<i class="dot"></i>' : ''}</button>` : '')
-    + (MP.active && MP.isHost ? '<button class="tb-btn warn" onclick="hostEndGame()" title="End the game for everyone">End</button>' : '')
-    + `<button class="tb-btn icon" onclick="toggleMute()" aria-label="${soundMuted ? 'Turn sound on' : 'Mute'}" title="${soundMuted ? 'Sound off' : 'Sound on'}">${soundMuted ? '🔇' : '🔊'}</button>`
-    + '<button class="tb-btn" onclick="showHistory()" title="Score sheet">Sheet</button>'
+    + (MP.active ? `<button class="tb-btn icon" onclick="toggleChat()" aria-label="${t('Chat')}" title="${t('Chat')}">💬${MP.chatUnread ? '<i class="dot"></i>' : ''}</button>` : '')
+    + (MP.active && MP.isHost ? `<button class="tb-btn warn" onclick="hostEndGame()" title="${t('End the game for everyone')}">${t('End')}</button>` : '')
+    + `<button class="tb-btn icon" onclick="toggleMute()" aria-label="${t(soundMuted ? 'Turn sound on' : 'Mute')}" title="${t(soundMuted ? 'Sound off' : 'Sound on')}">${soundMuted ? '🔇' : '🔊'}</button>`
+    + `<button class="tb-btn" onclick="showHistory()" title="${t('Score sheet')}">${t('Sheet')}</button>`
     + '</div>' + standingsHTML();
 }
 
@@ -2997,9 +3316,9 @@ function standingsHTML() {
   const rows = order.map((e, k) => {
     if (e.s !== prev) { place = k + 1; prev = e.s; }
     const cls = (e.i === M() ? ' me' : '') + (place === 1 ? ' lead' : '');
-    return `<span class="st${cls}" title="${escHTML(G.playerNames[e.i])}: ${e.s}"><i>${place}</i><span class="st-name">${playerLabel(e.i)}</span><b>${e.s}</b></span>`;
+    return `<span class="st${cls}" title="${playerLabel(e.i)}: ${e.s}"><i>${place}</i><span class="st-name">${playerLabel(e.i)}</span><b>${e.s}</b></span>`;
   }).join('');
-  return `<div class="standings${G.numPlayers >= 5 ? ' many' : ''}" style="--n:${G.numPlayers}" aria-label="Standings">${rows}</div>`;
+  return `<div class="standings${G.numPlayers >= 5 ? ' many' : ''}" style="--n:${G.numPlayers}" aria-label="${t('Standings')}">${rows}</div>`;
 }
 
 function renderSeats() {
@@ -3008,7 +3327,7 @@ function renderSeats() {
     if (p === M()) continue;
     const g = seatGeom(p);
     html += `<div class="seat${isActive(p) ? ' active' : ''}" style="--ux:${g.ux};--uy:${g.uy}">`
-      + (G.dealerIndex === p ? '<span class="dealer" title="Dealer">D</span>' : '')
+      + (G.dealerIndex === p ? `<span class="dealer" title="${t('Dealer')}">D</span>` : '')
       + `<div class="nm"><span class="face">${faceOf(p)}</span><span class="txt">${playerLabel(p)}</span></div>`
       + `<div class="row">${bidHTML(p)}</div>`
       + '</div>';
@@ -3035,16 +3354,16 @@ function renderCenter() {
     if (resolving) cls += e.playerIndex === G.trickWinnerIndex ? ' win' : ' lose';
     if (animate && i === entries.length - 1) cls += ' enter';
     const from = e.playerIndex === M() ? ';--from-y:118%' : '';
-    html += `<div class="${cls}" style="--ux:${g.ux};--uy:${g.uy};--rot:${cardTilt(e.card)}deg${from}">${cardHTML(e.card, '', 'div', `aria-label="${escHTML(G.playerNames[e.playerIndex])}: ${cardName(e.card)}"`)}</div>`;
+    html += `<div class="${cls}" style="--ux:${g.ux};--uy:${g.uy};--rot:${cardTilt(e.card)}deg${from}">${cardHTML(e.card, '', 'div', `aria-label="${playerLabel(e.playerIndex)}: ${cardName(e.card)}"`)}</div>`;
   });
-  if (ghost) html += '<div class="ghost-cap">Last trick</div>';
+  if (ghost) html += `<div class="ghost-cap">${t('Last trick')}</div>`;
   area.innerHTML = html;
   if (animate) _lastPlayAnimKey = animKey;
 
   const center = document.getElementById('table-center');
   center.innerHTML = G.trumpCard
-    ? `<div class="trump-stack"><span class="card card-back small deck"></span>${cardHTML(G.trumpCard, 'small', 'div', `aria-label="Trump card: ${cardName(G.trumpCard)}"`)}</div><div class="table-cap">Trump</div>`
-    : '<div class="no-trump">No<br>trump</div>';
+    ? `<div class="trump-stack"><span class="card card-back small deck"></span>${cardHTML(G.trumpCard, 'small', 'div', `aria-label="${t('Trump card: {card}', { card: cardName(G.trumpCard) })}"`)}</div><div class="table-cap">${t('Trump')}</div>`
+    : `<div class="no-trump">${t('No<br>trump')}</div>`;
 }
 
 function renderHand() {
@@ -3061,7 +3380,7 @@ function renderHand() {
     let cls = myTurn ? (ok ? 'playable' : 'illegal') : '';
     if (autoCard && autoCard.rank === card.rank && autoCard.suit === card.suit) cls += ' auto-play-glow';
     const act = myTurn && ok ? `onclick="humanPlayCard('${card.rank}','${card.suit}')"` : (myTurn ? 'aria-disabled="true"' : '');
-    return cardHTML(card, cls, 'button', `${act} style="--k:${(i - mid).toFixed(2)}" aria-label="${cardName(card)}${myTurn && !ok ? ', cannot be played now' : ''}"`);
+    return cardHTML(card, cls, 'button', `${act} style="--k:${(i - mid).toFixed(2)}" aria-label="${cardName(card)}${myTurn && !ok ? t(', cannot be played now') : ''}"`);
   }).join('');
   renderMeStrip();
 }
@@ -3069,8 +3388,8 @@ function renderHand() {
 function renderMeStrip() {
   const el = document.getElementById('me-strip');
   el.className = isActive(M()) ? 'active' : '';
-  el.innerHTML = (G.dealerIndex === M() ? '<span class="dealer" title="You deal">D</span>' : '')
-    + `<span class="nm">${faceOf(M())} You</span>${bidHTML(M())}`;
+  el.innerHTML = (G.dealerIndex === M() ? `<span class="dealer" title="${t('You deal')}">D</span>` : '')
+    + `<span class="nm">${faceOf(M())} ${t('You')}</span>${bidHTML(M())}`;
 }
 
 function renderActionBar() {
@@ -3079,7 +3398,7 @@ function renderActionBar() {
     const cpp = G.cardsPerPlayer;
     const { valid, forbidden } = getValidBids(cpp, G.bids, isLastBidder());
     if (fastPlayOn() && valid.length === 1) {
-      bar.innerHTML = `<span class="status-text you">Only one bid is allowed: ${valid[0]}. Bidding it.</span>`;
+      bar.innerHTML = `<span class="status-text you">${t('Only one bid is allowed: {bid}. Bidding it.', { bid: valid[0] })}</span>`;
       return;
     }
     const nb = cpp + 1;
@@ -3087,7 +3406,7 @@ function renderActionBar() {
     let btns = '';
     for (let i = 0; i <= cpp; i++) {
       const ok = valid.includes(i);
-      btns += `<button class="bid-btn${i === forbidden ? ' forbidden' : ''}" ${ok ? `onclick="humanBid(${i})"` : 'disabled'} aria-label="${i === forbidden ? `${i}, not allowed` : `Bid ${i}`}">${i}</button>`;
+      btns += `<button class="bid-btn${i === forbidden ? ' forbidden' : ''}" ${ok ? `onclick="humanBid(${i})"` : 'disabled'} aria-label="${i === forbidden ? t('{n}, not allowed', { n: i }) : t('Bid {n}', { n: i })}">${i}</button>`;
     }
     const sum = G.bids.reduce((a, b) => a + (b ?? 0), 0);
     const placed = [];
@@ -3095,35 +3414,36 @@ function renderActionBar() {
       const p = (G.dealerIndex + k) % G.numPlayers; // bidding starts left of the dealer
       if (p !== M() && G.bids[p] !== null) placed.push(`${playerLabel(p)} <b>${G.bids[p]}</b>`);
     }
-    const others = placed.length ? `${placed.join(', ')}. Total ${sum} of ${cpp}.` : `You bid first. ${cpp} tricks to take.`;
-    const warn = forbidden !== null ? `<span class="warn">You can't bid ${forbidden}: the total would be ${cpp}.</span>` : '';
-    bar.innerHTML = `<div class="bid-panel"><div class="bid-head"><div class="bid-info"><span><span class="lbl">Your bid</span><span class="muted">${others}</span></span>${warn}</div>`
-      + '<button class="hint-btn" onclick="toggleBidSuggestion()">Hint</button></div>'
+    const others = placed.length ? t('{list}. Total {sum} of {cpp}.', { list: placed.join(', '), sum, cpp })
+      : t('You bid first. {n} to take.', { n: nOf(cpp, 'trick', 'tricks', 'mână', 'mâini') });
+    const warn = forbidden !== null ? `<span class="warn">${t("You can't bid {f}: the total would be {cpp}.", { f: forbidden, cpp })}</span>` : '';
+    bar.innerHTML = `<div class="bid-panel"><div class="bid-head"><div class="bid-info"><span><span class="lbl">${t('Your bid')}</span><span class="muted">${others}</span></span>${warn}</div>`
+      + `<button class="hint-btn" onclick="toggleBidSuggestion()">${t('Hint')}</button></div>`
       + `<div class="bid-row" style="--cols:${cols};--nb:${nb}">${btns}</div></div>`;
   } else if (G.phase === 'bidding') {
-    bar.innerHTML = `<span class="status-text"><span class="who">${playerLabel(G.currentBidderIndex)}</span> is bidding</span>`;
+    bar.innerHTML = `<span class="status-text">${t('{who} is bidding', { who: `<span class="who">${playerLabel(G.currentBidderIndex)}</span>` })}</span>`;
   } else if (G.phase === 'playing' && G.currentTrick.length >= G.numPlayers) {
     const w = currentWinner().playerIndex;
-    bar.innerHTML = `<span class="status-text">${w === M() ? 'You take the trick' : `<span class="who">${playerLabel(w)}</span> takes the trick`}</span>`;
+    bar.innerHTML = `<span class="status-text">${w === M() ? t('You take the trick') : t('{who} takes the trick', { who: `<span class="who">${playerLabel(w)}</span>` })}</span>`;
   } else if (G.phase === 'playing' && currentPlayerToAct() === M()) {
     const led = G.currentTrick.length ? G.currentTrick[0].card.suit : null;
     const hand = G.hands[M()];
     const legal = getLegalMoves(hand, led, G.trumpSuit);
     let msg;
     const autoCard = autoPlayChoice(legal, hand);
-    if (legal.length === 1) msg = 'Only one card can be played. Playing it.';
-    else if (autoCard) msg = `Your cards here are interchangeable. Playing the ${autoCard.rank}${suitTxt(autoCard.suit)}.`;
-    else if (!led) msg = 'Your lead';
-    else if (hand.some(c => c.suit === led)) msg = `Your turn: follow ${suitTxt(led)}`;
-    else if (G.trumpSuit && hand.some(c => c.suit === G.trumpSuit)) msg = `No ${suitTxt(led)} left: you must trump ${suitTxt(G.trumpSuit)}`;
-    else msg = `No ${suitTxt(led)} left: play any card`;
+    if (legal.length === 1) msg = t('Only one card can be played. Playing it.');
+    else if (autoCard) msg = t('Your cards here are interchangeable. Playing the {card}.', { card: autoCard.rank + suitTxt(autoCard.suit) });
+    else if (!led) msg = t('Your lead');
+    else if (hand.some(c => c.suit === led)) msg = t('Your turn: follow {suit}', { suit: suitTxt(led) });
+    else if (G.trumpSuit && hand.some(c => c.suit === G.trumpSuit)) msg = t('No {led} left: you must trump {trump}', { led: suitTxt(led), trump: suitTxt(G.trumpSuit) });
+    else msg = t('No {led} left: play any card', { led: suitTxt(led) });
     bar.innerHTML = `<span class="status-text you">${msg}</span>`
-      + (!autoCard ? '<button class="hint-btn" onclick="toggleSuggestion()">Hint</button>' : '');
+      + (!autoCard ? `<button class="hint-btn" onclick="toggleSuggestion()">${t('Hint')}</button>` : '');
   } else if (G.phase === 'playing') {
-    bar.innerHTML = `<span class="status-text"><span class="who">${playerLabel(currentPlayerToAct())}</span> to play</span>`;
+    bar.innerHTML = `<span class="status-text">${t('{who} to play', { who: `<span class="who">${playerLabel(currentPlayerToAct())}</span>` })}</span>`;
   } else if (G.phase === 'trickResult') {
     const w = G.trickWinnerIndex;
-    bar.innerHTML = `<span class="status-text">${w === M() ? 'You take the trick' : `<span class="who">${playerLabel(w)}</span> takes the trick`}</span>${bidHTML(w)}`;
+    bar.innerHTML = `<span class="status-text">${w === M() ? t('You take the trick') : t('{who} takes the trick', { who: `<span class="who">${playerLabel(w)}</span>` })}</span>${bidHTML(w)}`;
   } else {
     bar.innerHTML = '';
   }
@@ -3132,8 +3452,8 @@ function renderActionBar() {
 // ─── Score sheet (round results, history, final) ───
 function scoringLine() {
   return G.scoringMode === 'geometric'
-    ? 'Geometric scoring: a made bid B scores 5 + B(B+1)/2; missing by d costs d(d+1)/2.'
-    : 'Classic scoring: a made bid scores 5 + the bid; a miss costs 1 point per trick off.';
+    ? t('Geometric scoring: a made bid B scores 5 + B(B+1)/2; missing by d costs d(d+1)/2.')
+    : t('Classic scoring: a made bid scores 5 + the bid; a miss costs 1 point per trick off.');
 }
 
 const RING_SVG = '<svg class="ring" viewBox="0 0 100 40" preserveAspectRatio="none" aria-hidden="true"><path vector-effect="non-scaling-stroke" d="M30,5 C12,6 3,13 4,21 C6,33 30,37 55,36 C80,35 97,29 96,18 C95,8 74,3 50,4 C38,4 26,6 18,10"/></svg>';
@@ -3142,8 +3462,8 @@ function sheetTableHTML({ highlight = -1, final = false } = {}) {
   const n = G.numPlayers, hist = G.roundHistory || [];
   const lastIdx = hist.length - 1;
   const max = Math.max(...G.scores);
-  let h = `<table class="score-sheet${n >= 5 ? ' wide' : ''}"><colgroup><col class="c-rc">${'<col>'.repeat(n)}</colgroup><thead><tr><th class="rc" title="Cards dealt"></th>`;
-  for (let p = 0; p < n; p++) h += `<th class="${p === M() ? 'me' : ''}" title="${escHTML(G.playerNames[p])}">${playerLabel(p)}</th>`;
+  let h = `<table class="score-sheet${n >= 5 ? ' wide' : ''}"><colgroup><col class="c-rc">${'<col>'.repeat(n)}</colgroup><thead><tr><th class="rc" title="${t('Cards dealt')}"></th>`;
+  for (let p = 0; p < n; p++) h += `<th class="${p === M() ? 'me' : ''}" title="${p === M() ? t('You') : escHTML(G.playerNames[p])}">${playerLabel(p)}</th>`;
   h += '</tr></thead><tbody>';
   G.roundSequence.forEach((cpp, r) => {
     const row = hist[r];
@@ -3156,7 +3476,7 @@ function sheetTableHTML({ highlight = -1, final = false } = {}) {
       const d = row.roundScores[p];
       const ring = final && r === lastIdx && row.cumulativeScores[p] === max ? RING_SVG : '';
       h += `<td class="cell${made ? '' : ' miss'}${meCol}" style="--c:${p + 1}">`
-        + `<span class="wb" title="tricks taken / bid">${row.tricksWon[p]}/${row.bids[p]}</span>`
+        + `<span class="wb" title="${t('tricks taken / bid')}">${row.tricksWon[p]}/${row.bids[p]}</span>`
         + (r === highlight ? `<span class="d">${d > 0 ? '+' : ''}${d}</span>` : '')
         + `<span class="tot">${row.cumulativeScores[p]}</span>${ring}</td>`;
     }
@@ -3167,14 +3487,14 @@ function sheetTableHTML({ highlight = -1, final = false } = {}) {
 
 function trickLogHTML(tricks) {
   if (!tricks || !tricks.length) return '';
-  let html = '<details class="trick-log"><summary>How the tricks went</summary><div class="trick-log-body">';
-  tricks.forEach((t, i) => {
+  let html = `<details class="trick-log"><summary>${t('How the tricks went')}</summary><div class="trick-log-body">`;
+  tricks.forEach((tr, i) => {
     html += `<div class="trick-log-row"><span class="trick-log-num">${i + 1}.</span>`;
-    t.entries.forEach((e, j) => {
-      const isW = e.playerIndex === t.winnerIndex;
-      html += `<span class="trick-log-card ${SUIT_COLOR[e.card.suit]}${isW ? ' tl-winner' : ''}" title="${escHTML(G.playerNames[e.playerIndex])}${j === 0 ? ', led' : ''}">${e.card.rank}${SUIT_SYMBOL[e.card.suit]}</span>`;
+    tr.entries.forEach((e, j) => {
+      const isW = e.playerIndex === tr.winnerIndex;
+      html += `<span class="trick-log-card ${SUIT_COLOR[e.card.suit]}${isW ? ' tl-winner' : ''}" title="${playerLabel(e.playerIndex)}${j === 0 ? t(', led') : ''}">${e.card.rank}${SUIT_SYMBOL[e.card.suit]}</span>`;
     });
-    html += `<span class="trick-log-reason">${playerLabel(t.winnerIndex)}, ${t.reason}</span></div>`;
+    html += `<span class="trick-log-reason">${playerLabel(tr.winnerIndex)}, ${tr.reason}</span></div>`;
   });
   return html + '</div></details>';
 }
@@ -3201,12 +3521,12 @@ function openSheet(id, head, body, foot, closeOnBackdrop) {
 function roundSummary(roundScores) {
   const bid = G.bids[M()], won = G.tricksWon[M()], d = roundScores[M()];
   const mine = won === bid
-    ? (bid === 0 ? `You took none, as bid: <b>+${d}</b>.` : `You made ${bid}: <b>+${d}</b>.`)
-    : `You took ${won} on a bid of ${bid}: <b class="neg">${d}</b>.`;
+    ? (bid === 0 ? t('You took none, as bid: {pts}.', { pts: `<b>+${d}</b>` }) : t('You made {bid}: {pts}.', { bid, pts: `<b>+${d}</b>` }))
+    : t('You took {won} on a bid of {bid}: {pts}.', { won, bid, pts: `<b class="neg">${d}</b>` });
   const missed = [];
   for (let p = 0; p < G.numPlayers; p++) if (p !== M() && G.tricksWon[p] !== G.bids[p]) missed.push(playerLabel(p));
-  const others = !missed.length ? 'Everyone else made theirs.'
-    : `Missed: ${missed.join(', ')}.`;
+  const others = !missed.length ? t('Everyone else made theirs.')
+    : t('Missed: {list}.', { list: missed.join(', ') });
   return `${mine} ${others}`;
 }
 
@@ -3335,20 +3655,20 @@ function engineBidValues(me, valid) {
   }
   return val;
 }
-function fmtPts(x) { return (Math.round(x * 10) / 10).toFixed(1).replace(/\.0$/, ''); }
+function fmtPts(x) { return dec((Math.round(x * 10) / 10).toFixed(1).replace(/\.0$/, '')); }
 function signed(x) { const v = fmtPts(x); return x > 0 ? '+' + v : x < 0 ? '−' + v.slice(1) : v; }
 function bidCheckBehind(c) { return Math.round((c.val[c.pick] - c.val[c.bid]) * 10) / 10; }
 function bidCheckHTML(r) {
   const c = bidChecks()[r];
   if (!c || c.bid == null) return '';
   const lost = bidCheckBehind(c);
-  const verdict = c.bid === c.pick ? `The engine bids ${c.pick} too.`
-    : lost > 1 ? `The engine bids ${c.pick}; your ${c.bid} gives up about ${fmtPts(lost)} points.`
-    : `The engine slightly prefers ${c.pick}; your ${c.bid} is within a point.`;
+  const verdict = c.bid === c.pick ? t('The engine bids {pick} too.', { pick: c.pick })
+    : lost > 1 ? t('The engine bids {pick}; your {bid} gives up about {pts} points.', { pick: c.pick, bid: c.bid, pts: fmtPts(lost) })
+    : t('The engine slightly prefers {pick}; your {bid} is within a point.', { pick: c.pick, bid: c.bid });
   const lo = Math.min(c.pick, c.bid) - 1, hi = Math.max(c.pick, c.bid) + 1;
   const chips = Object.keys(c.val).map(Number).filter(b => b >= lo && b <= hi).sort((a, b) => a - b).map(b =>
-    `<span class="${[b === c.bid ? 'you' : '', b === c.pick ? 'best' : ''].join(' ').trim()}">bid ${b}: ${signed(c.val[b])}</span>`).join('');
-  return `<p class="sub bid-check${lost > 1 ? ' flag' : ''}"><span class="bc-verdict">Bid check: ${verdict}</span><span class="bc-chips" title="Expected points for each bid, as the engine saw your hand when you bid">${chips}</span></p>`;
+    `<span class="${[b === c.bid ? 'you' : '', b === c.pick ? 'best' : ''].join(' ').trim()}">${t('bid {b}: {v}', { b, v: signed(c.val[b]) })}</span>`).join('');
+  return `<p class="sub bid-check${lost > 1 ? ' flag' : ''}"><span class="bc-verdict">${t('Bid check:')} ${verdict}</span><span class="bc-chips" title="${t('Expected points for each bid, as the engine saw your hand when you bid')}">${chips}</span></p>`;
 }
 function bidCheckTotals() {
   const done = Object.values(bidChecks()).filter(c => c && c.bid != null);
@@ -3356,32 +3676,33 @@ function bidCheckTotals() {
     behind: Math.round(done.reduce((a, c) => a + bidCheckBehind(c), 0) * 10) / 10 };
 }
 function bidCheckSummaryHTML() {
-  const t = bidCheckTotals();
-  if (!t.rounds) return '';
-  const text = t.flagged
-    ? `${t.flagged} of your ${t.rounds} checked bids were over a point behind the engine's pick; about ${fmtPts(t.behind)} points in all.`
-    : `All ${t.rounds} checked bids were within a point of the engine's pick.`;
-  return `<p class="sub bid-check${t.flagged ? ' flag' : ''}"><span class="bc-verdict">Bid check: ${text}</span></p>`;
+  const tot = bidCheckTotals();
+  if (!tot.rounds) return '';
+  const text = tot.flagged
+    ? t("{flagged} of your {rounds} checked bids were over a point behind the engine's pick; about {pts} points in all.", { flagged: tot.flagged, rounds: tot.rounds, pts: fmtPts(tot.behind) })
+    : t("All {rounds} checked bids were within a point of the engine's pick.", { rounds: tot.rounds });
+  return `<p class="sub bid-check${tot.flagged ? ' flag' : ''}"><span class="bc-verdict">${t('Bid check:')} ${text}</span></p>`;
 }
 
 function showRoundResult(roundScores) {
   const r = G.currentRoundIndex;
   const isLast = r + 1 >= G.roundSequence.length;
-  const trumpStr = G.trumpSuit ? `${SUIT_SYMBOL[G.trumpSuit]} trump` : 'no trump';
+  const trumpStr = G.trumpSuit ? t('{s} trump', { s: SUIT_SYMBOL[G.trumpSuit] }) : t('no trump');
   const out = !isLast && humansOut();
   const champ = isLast || out ? -1 : humanClinched();
-  const outNote = out ? `<p class="sub out-note">${(() => { const h = G.playerNames.map((_, i) => i).filter(i => !isAIPlayer(i)); return h.length === 1 && h[0] === M() ? 'You' : 'No human player'; })()} can no longer finish first, even with perfect rounds from here.</p>` : '';
-  const winNote = champ >= 0 ? `<p class="sub won-note">${champ === M() ? 'You have' : escHTML(G.playerNames[champ]) + ' has'} clinched first place. Nobody can catch up, even with perfect rounds from here.</p>` : '';
-  const head = `<h2>Round ${r + 1}<small>${G.cardsPerPlayer} card${G.cardsPerPlayer > 1 ? 's' : ''}, ${trumpStr}</small></h2><p class="sub">${roundSummary(roundScores)}</p>${bidCheckHTML(r)}${outNote}${winNote}`;
+  const humanSeats = G.playerNames.map((_, i) => i).filter(i => !isAIPlayer(i));
+  const outNote = out ? `<p class="sub out-note">${humanSeats.length === 1 && humanSeats[0] === M() ? t('You can no longer finish first, even with perfect rounds from here.') : t('No human player can finish first any more, even with perfect rounds from here.')}</p>` : '';
+  const winNote = champ >= 0 ? `<p class="sub won-note">${champ === M() ? t('You have clinched first place. Nobody can catch up, even with perfect rounds from here.') : t('{name} has clinched first place. Nobody can catch up, even with perfect rounds from here.', { name: escHTML(G.playerNames[champ]) })}</p>` : '';
+  const head = `<h2>${t('Round {n}', { n: r + 1 })}<small>${nOf(G.cardsPerPlayer, 'card', 'cards', 'carte', 'cărți')}, ${trumpStr}</small></h2><p class="sub">${roundSummary(roundScores)}</p>${bidCheckHTML(r)}${outNote}${winNote}`;
   const body = sheetTableHTML({ highlight: (G.roundHistory || []).length - 1 });
   const canAdvance = !MP.active || MP.isHost;
   const foot = (trickLogHTML(G.trickHistory) || '<span></span>') + (!canAdvance
-    ? `<span class="wait">${isLast ? 'Waiting for the host to show final scores…' : 'Waiting for the host to deal…'}</span>`
+    ? `<span class="wait">${t(isLast ? 'Waiting for the host to show final scores…' : 'Waiting for the host to deal…')}</span>`
     : isLast
-    ? '<button class="btn-ink" onclick="showGameOver()">See final scores</button>'
+    ? `<button class="btn-ink" onclick="showGameOver()">${t('See final scores')}</button>`
     : out || champ >= 0
-    ? '<span class="foot-links"><button onclick="nextRound()">Play on</button><button class="btn-ink" onclick="showGameOver()">End game</button></span>'
-    : '<button class="btn-ink" onclick="nextRound()">Next round</button>');
+    ? `<span class="foot-links"><button onclick="nextRound()">${t('Play on')}</button><button class="btn-ink" onclick="showGameOver()">${t('End game')}</button></span>`
+    : `<button class="btn-ink" onclick="nextRound()">${t('Next round')}</button>`);
   openSheet('round-overlay', head, body, foot, false);
 }
 
@@ -3392,21 +3713,21 @@ function nextRound() {
   startRound();
 }
 
-function ordinal(k) { return k + (['th', 'st', 'nd', 'rd'][(k % 100 - 20) % 10] || ['th', 'st', 'nd', 'rd'][k % 100] || 'th'); }
+function ordinal(k) { return LANG === 'ro' ? String(k) : k + (['th', 'st', 'nd', 'rd'][(k % 100 - 20) % 10] || ['th', 'st', 'nd', 'rd'][k % 100] || 'th'); }
 
 function finalTitle() {
   const max = Math.max(...G.scores);
   const winners = G.scores.map((s, i) => s === max ? i : -1).filter(i => i >= 0);
   const ranked = G.scores.map((s, i) => ({ s, i })).sort((a, b) => b.s - a.s);
   if (winners.length > 1) {
-    return { title: `${winners.map(playerLabel).join(' and ')} tie at ${max}`,
-      sub: winners.includes(M()) ? 'A shared win.' : `You finish with ${G.scores[M()]}.` };
+    return { title: t('{names} tie at {n}', { names: winners.map(playerLabel).join(t(' and ')), n: max }),
+      sub: winners.includes(M()) ? t('A shared win.') : t('You finish with {n}.', { n: G.scores[M()] }) };
   }
   const w = winners[0];
   const runnerUp = ranked[1];
-  if (w === M()) return { title: `You win with ${max}`, sub: `${playerLabel(runnerUp.i)} is next with ${runnerUp.s}.` };
+  if (w === M()) return { title: t('You win with {n}', { n: max }), sub: t('{name} is next with {n}.', { name: playerLabel(runnerUp.i), n: runnerUp.s }) };
   const place = ranked.findIndex(x => x.i === M()) + 1;
-  return { title: `${playerLabel(w)} wins with ${max}`, sub: `You finish ${ordinal(place)} with ${G.scores[M()]}.` };
+  return { title: t('{name} wins with {n}', { name: playerLabel(w), n: max }), sub: t('You finish {place} with {n}.', { place: ordinal(place), n: G.scores[M()] }) };
 }
 
 // Final standings, best first; ties share a place
@@ -3414,7 +3735,7 @@ function finalRankHTML() {
   const order = G.scores.map((s, i) => ({ s, i })).sort((a, b) => b.s - a.s || a.i - b.i);
   const top = order[0].s;
   let place = 0, prev = null;
-  return '<ol class="final-rank" aria-label="Final standings">' + order.map((e, k) => {
+  return `<ol class="final-rank" aria-label="${t('Final standings')}">` + order.map((e, k) => {
     if (e.s !== prev) { place = k + 1; prev = e.s; }
     const cls = [e.i === M() ? 'me' : '', place === 1 ? 'win' : ''].join(' ').trim();
     return `<li class="${cls}"><span class="pl">${place}</span><span class="nm">${playerLabel(e.i)}</span>`
@@ -3477,15 +3798,15 @@ function showGameOver() {
 // play over the bot.
 let rematchOffer = 0;        // the game number on offer (host and guests)
 let rematchListener = null;  // host: watches the guests' confirmations
-const statsLink = '<a href="index.html?stats=1" target="_blank" rel="noopener">Your stats</a>';
+function statsLink() { return `<a href="index.html?stats=1" target="_blank" rel="noopener">${t('Your stats')}</a>`; }
 function gameOverFootHTML() {
-  if (!MP.active) return `<span class="foot-links">${statsLink}</span><button class="btn-ink" onclick="resetGame()">Play again</button>`;
+  if (!MP.active) return `<span class="foot-links">${statsLink()}</span><button class="btn-ink" onclick="resetGame()">${t('Play again')}</button>`;
   if (MP.isHost) return rematchOffer
-    ? `<span class="foot-links">${statsLink}</span><button class="btn-ink" onclick="hostDealRematch()">Deal now</button>`
-    : `<span class="foot-links">${statsLink}<button onclick="resetGame()">New table</button></span><button class="btn-ink" onclick="hostOfferRematch()">Rematch</button>`;
+    ? `<span class="foot-links">${statsLink()}</span><button class="btn-ink" onclick="hostDealRematch()">${t('Deal now')}</button>`
+    : `<span class="foot-links">${statsLink()}<button onclick="resetGame()">${t('New table')}</button></span><button class="btn-ink" onclick="hostOfferRematch()">${t('Rematch')}</button>`;
   return rematchOffer
-    ? `<span class="foot-links">${statsLink}<button onclick="guestLeaveTable()">Leave the table</button></span><span class="wait">Rematch coming…</span>`
-    : `<span class="foot-links">${statsLink}</span><span class="wait">Game over. Thanks for playing.</span>`;
+    ? `<span class="foot-links">${statsLink()}<button onclick="guestLeaveTable()">${t('Leave the table')}</button></span><span class="wait">${t('Rematch coming…')}</span>`
+    : `<span class="foot-links">${statsLink()}</span><span class="wait">${t('Game over. Thanks for playing.')}</span>`;
 }
 // Guests who have not confirmed the offer yet ('out' means they left)
 function rematchPending() {
@@ -3499,9 +3820,9 @@ function renderRematch() {
     const waiting = rematchPending();
     if (!waiting.length) { hostDealRematch(); return; }
     const names = waiting.map(([, p]) => escapeHtml(p.name));
-    box.innerHTML = `<p class="sub won-note">Rematch: waiting for ${names.join(' and ')}. Deal now and a bot takes the seat of anyone not back.</p>`;
+    box.innerHTML = `<p class="sub won-note">${t('Rematch: waiting for {names}. Deal now and a bot takes the seat of anyone not back.', { names: names.join(t(' and ')) })}</p>`;
   } else if (!MP.isHost && rematchOffer) {
-    box.innerHTML = `<p class="sub won-note">${escapeHtml(G.playerNames[0] || 'The host')} started a rematch: same seats and scoring. Dealing as soon as everyone is back.</p>`;
+    box.innerHTML = `<p class="sub won-note">${t('{host} started a rematch: same seats and scoring. Dealing as soon as everyone is back.', { host: G.playerNames[0] ? escapeHtml(G.playerNames[0]) : t('The host') })}</p>`;
   } else box.innerHTML = '';
   ov.querySelector('.sheet-foot').innerHTML = gameOverFootHTML();
 }
@@ -3557,7 +3878,7 @@ function mpListenRematch() {
     MP.active = false;
     removeOverlays();
     document.getElementById('chat-widget').classList.remove('open');
-    document.getElementById('game-screen').innerHTML = '<div class="ended-wrap"><div class="sheet setup-sheet"><h1>Rematch dealt</h1><p class="lede">You were away when the rematch was dealt, so a bot took your seat.</p><button class="btn-ink" onclick="location.href=location.pathname">Back to the menu</button></div></div>';
+    document.getElementById('game-screen').innerHTML = `<div class="ended-wrap"><div class="sheet setup-sheet"><h1>${t('Rematch dealt')}</h1><p class="lede">${t('You were away when the rematch was dealt, so a bot took your seat.')}</p><button class="btn-ink" onclick="location.href=location.pathname">${t('Back to the menu')}</button></div></div>`;
   });
 }
 function guestLeaveTable() {
@@ -3567,7 +3888,7 @@ function guestLeaveTable() {
 
 function hostEndGame() {
   if (!MP.active || !MP.isHost) return;
-  if (!confirm('End the game for everyone at the table?')) return;
+  if (!confirm(t('End the game for everyone at the table?'))) return;
   localStorage.removeItem('mpHostSession');
   G.phase = 'ended';
   mpPushGameState(); // guests see phase 'ended' and get a message
@@ -3592,10 +3913,10 @@ function removeOverlays() {
 
 function showHistory() {
   if (!G || !G.roundSequence) return;
-  openSheet('history-overlay', `<h2>Score sheet</h2><p class="sub">${scoringLine()}</p>`,
+  openSheet('history-overlay', `<h2>${t('Score sheet')}</h2><p class="sub">${scoringLine()}</p>`,
     sheetTableHTML({}),
-    '<div class="foot-links"><button id="download-btn" onclick="downloadGameLogs()">Download game logs</button></div>'
-    + '<button class="btn-ink" onclick="removeOverlays()">Back to the table</button>', true);
+    `<div class="foot-links"><button id="download-btn" onclick="downloadGameLogs()">${t('Download game logs')}</button></div>`
+    + `<button class="btn-ink" onclick="removeOverlays()">${t('Back to the table')}</button>`, true);
 }
 
 
@@ -3640,16 +3961,16 @@ function toggleBidSuggestion() {
     const isTrump=G.trumpSuit&&suit===G.trumpSuit,sym=SUIT_SYMBOL[suit];
     for(const card of cards){
       const val=RANK_VALUE[card.rank];
-      if(isTrump){if(val>=13){estimate+=0.9;reasons.push(`${card.rank}${sym} is a high trump`);}else if(val>=11){estimate+=0.5;reasons.push(`${card.rank}${sym} is a mid trump`);}else estimate+=0.15;}
-      else{if(val===14){estimate+=0.85;reasons.push(`${card.rank}${sym} is an Ace`);}else if(val===13){const ha=cards.some(c=>c.rank==='A');estimate+=ha?0.6:0.45;reasons.push(ha?`${card.rank}${sym} backed by Ace`:`${card.rank}${sym} without Ace`);}else if(val===12){estimate+=cards.some(c=>RANK_VALUE[c.rank]>12)?0.25:0.12;}}
+      if(isTrump){if(val>=13){estimate+=0.9;reasons.push(t('{card} is a high trump', { card: card.rank + sym }));}else if(val>=11){estimate+=0.5;reasons.push(t('{card} is a mid trump', { card: card.rank + sym }));}else estimate+=0.15;}
+      else{if(val===14){estimate+=0.85;reasons.push(t('{card} is an Ace', { card: card.rank + sym }));}else if(val===13){const ha=cards.some(c=>c.rank==='A');estimate+=ha?0.6:0.45;reasons.push(t(ha ? '{card} backed by Ace' : '{card} without Ace', { card: card.rank + sym }));}else if(val===12){estimate+=cards.some(c=>RANK_VALUE[c.rank]>12)?0.25:0.12;}}
     }
   }
-  if(G.trumpSuit){const tc=(suitCards[G.trumpSuit]||[]).length;for(const s of SUITS){if(s!==G.trumpSuit&&suitCards[s].length===0&&tc>0){estimate+=0.35;reasons.push(`Void in ${SUIT_SYMBOL[s]} — can trump in`);}}}
+  if(G.trumpSuit){const tc=(suitCards[G.trumpSuit]||[]).length;for(const s of SUITS){if(s!==G.trumpSuit&&suitCards[s].length===0&&tc>0){estimate+=0.35;reasons.push(t('Void in {suit} — can trump in', { suit: SUIT_SYMBOL[s] }));}}}
   if(!G.trumpSuit)estimate*=1.1;
   let suggestedBid=Math.round(estimate);suggestedBid=Math.max(0,Math.min(cpp,suggestedBid));
   const{valid}=getValidBids(cpp,G.bids,isLastBidder());
   if(!valid.includes(suggestedBid)){suggestedBid=suggestedBid>0?suggestedBid-1:suggestedBid+1;suggestedBid=Math.max(0,Math.min(cpp,suggestedBid));}
-  document.getElementById('me-area').insertAdjacentHTML('beforeend',`<div id="suggestion-box">Suggested bid: <span class="suggestion-card">${suggestedBid}</span><div class="suggestion-reason">${reasons.slice(0,4).join('. ')||'A weak hand. Bid low.'}</div></div>`);
+  document.getElementById('me-area').insertAdjacentHTML('beforeend',`<div id="suggestion-box">${t('Suggested bid:')} <span class="suggestion-card">${suggestedBid}</span><div class="suggestion-reason">${reasons.slice(0,4).join('. ')||t('A weak hand. Bid low.')}</div></div>`);
 }
 
 // ─── LocalStorage Persistence ───
@@ -3727,8 +4048,8 @@ function applyScoringSetting() {
 
 function scoringModeText(mode) {
   return mode==='geometric'
-    ?'Geometric scoring: made bid B scores 5 + B(B+1)/2, missing by d costs d(d+1)/2.'
-    :'Classic scoring: made bid scores 5 + the bid, a miss costs 1 per trick off.';
+    ?t('Geometric scoring: made bid B scores 5 + B(B+1)/2, missing by d costs d(d+1)/2.')
+    :t('Classic scoring: made bid scores 5 + the bid, a miss costs 1 per trick off.');
 }
 
 function updateCreateBtn() {
@@ -3765,8 +4086,8 @@ function showLobbyScreen(code,numPlayers) {
 function copyLobbyLink() {
   const val=document.getElementById('lobby-link-input').value;
   navigator.clipboard.writeText(val).then(()=>{
-    const btn=document.querySelector('.copy-btn');btn.textContent='Copied!';
-    setTimeout(()=>btn.textContent='Copy link',1500);
+    const btn=document.querySelector('.copy-btn');btn.textContent=t('Copied!');
+    setTimeout(()=>btn.textContent=t('Copy link'),1500);
   });
 }
 
@@ -3785,7 +4106,7 @@ function renderLobby(numPlayers,players) {
   let html='';
   for(let i=0;i<numPlayers;i++){
     const name=seatMap[i],filled=!!name,isHost=i===0;
-    html+=`<div class="lobby-seat ${filled?'filled':''}"><div class="seat-name">${name||'open'}</div><div class="seat-status">${isHost?'host':filled?'joined':'waiting'}</div></div>`;
+    html+=`<div class="lobby-seat ${filled?'filled':''}"><div class="seat-name">${name||t('open')}</div><div class="seat-status">${t(isHost?'host':filled?'joined':'waiting')}</div></div>`;
   }
   document.getElementById('lobby-players').innerHTML=html;
 }
@@ -3824,23 +4145,34 @@ function mpShowJoin(code,session) {
   document.getElementById('join-screen').classList.add('active');
   document.getElementById('join-code-display').textContent=code;
   document.getElementById('join-mode').textContent=session?scoringModeText(session.scoringMode):'';
+  MP.joinMode=session?session.scoringMode:null;
+}
+// After a language switch: everything not rebuilt by translateStatic
+function onLangChange() {
+  const jm=document.getElementById('join-mode');
+  if(jm&&MP.joinMode)jm.textContent=scoringModeText(MP.joinMode);
+  if(document.getElementById('lobby-screen').classList.contains('active')){
+    document.getElementById('lobby-mode').textContent=scoringModeText(window._scoringMode);
+    renderLobby(MP.selectedCount,MP.players);
+  }
+  if(G&&G.roundSequence&&document.getElementById('game-screen').classList.contains('active'))renderAll();
 }
 
 function mpCompleteJoin() {
   const name=document.getElementById('join-name-input').value.trim();
   const code=document.getElementById('join-code-display').textContent;
-  if(!name){document.getElementById('join-status').textContent='Enter your name to join.';return;}
+  if(!name){document.getElementById('join-status').textContent=t('Enter your name to join.');return;}
   document.getElementById('join-btn').disabled=true;
-  document.getElementById('join-status').textContent='Connecting…';
+  document.getElementById('join-status').textContent=t('Connecting…');
   mpInit().then(()=>{
     MP.db.ref(`sessions/${code}`).once('value').then(snap=>{
       const session=snap.val();
-      if(!session){document.getElementById('join-status').textContent='No table with this code. Check the link.';document.getElementById('join-btn').disabled=false;return;}
+      if(!session){document.getElementById('join-status').textContent=t('No table with this code. Check the link.');document.getElementById('join-btn').disabled=false;return;}
       const numPlayers=session.numPlayers;
       const myEntry=session.players&&session.players[MP.uid];
       // Block strangers from joining a game already in progress
       if(!myEntry&&(session.phase==='playing'||session.phase==='ended')){
-        document.getElementById('join-status').textContent='This game has already started.';
+        document.getElementById('join-status').textContent=t('This game has already started.');
         document.getElementById('join-btn').disabled=false;
         return;
       }
@@ -3850,11 +4182,11 @@ function mpCompleteJoin() {
       } else {
         const taken=Object.values(session.players||{}).map(p=>p.seat);
         seat=-1;for(let i=1;i<numPlayers;i++)if(!taken.includes(i)){seat=i;break;}
-        if(seat===-1){document.getElementById('join-status').textContent='Every seat is taken.';document.getElementById('join-btn').disabled=false;return;}
+        if(seat===-1){document.getElementById('join-status').textContent=t('Every seat is taken.');document.getElementById('join-btn').disabled=false;return;}
       }
       MP.sessionId=code;MP.isHost=false;MP.mySeat=seat;MP.active=true;MP.selectedCount=numPlayers;
       MP.db.ref(`sessions/${code}/players/${MP.uid}`).set({seat,name:myEntry?myEntry.name:name}).then(()=>{
-        document.getElementById('join-status').textContent='You are in. Waiting for the host to start.';
+        document.getElementById('join-status').textContent=t('You are in. Waiting for the host to start.');
         MP.db.ref(`sessions/${code}/phase`).on('value',phSnap=>{
           if(phSnap.val()==='playing'){
             MP.db.ref(`sessions/${code}/playerNames`).once('value').then(ns=>{
@@ -3940,7 +4272,7 @@ function mpListenGameState() {
     if(state.phase==='ended'){
       removeOverlays();
       document.getElementById('chat-widget').classList.remove('open');
-      document.getElementById('game-screen').innerHTML='<div class="ended-wrap"><div class="sheet setup-sheet"><h1>Game over</h1><p class="lede">The host ended the game.</p><button class="btn-ink" onclick="location.href=location.pathname">Back to the menu</button></div></div>';
+      document.getElementById('game-screen').innerHTML=`<div class="ended-wrap"><div class="sheet setup-sheet"><h1>${t('Game over')}</h1><p class="lede">${t('The host ended the game.')}</p><button class="btn-ink" onclick="location.href=location.pathname">${t('Back to the menu')}</button></div></div>`;
       return;
     }
     const myHand=G.hands&&G.hands[MP.mySeat]?G.hands[MP.mySeat]:[];
@@ -4128,7 +4460,7 @@ window.addEventListener('DOMContentLoaded',()=>{
         } else if(session.phase==='playing'||session.phase==='ended') {
           // Stranger hitting the link after game started
           document.getElementById('mp-setup-screen').classList.add('active');
-          document.getElementById('mp-setup-msg').textContent='That game has already started. Open your own table below.';
+          document.getElementById('mp-setup-msg').textContent=t('That game has already started. Open your own table below.');
         } else {
           mpShowJoin(code,session);
         }
@@ -4141,7 +4473,7 @@ window.addEventListener('DOMContentLoaded',()=>{
       // Show resume button if a single-player save exists
       const saved=loadSavedState();
       if(saved&&!MP.active){
-        document.getElementById('resume-slot').innerHTML=`<button class="btn-ink" onclick="resumeGame()">Resume round ${saved.currentRoundIndex+1} of ${saved.roundSequence.length}</button>`;
+        document.getElementById('resume-slot').innerHTML=`<button class="btn-ink" onclick="resumeGame()">${t('Resume round {r} of {n}', { r: saved.currentRoundIndex + 1, n: saved.roundSequence.length })}</button>`;
       }
     });
   }
