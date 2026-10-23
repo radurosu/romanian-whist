@@ -4316,6 +4316,7 @@ function finalRankHTML() {
 
 function showGameOver() {
   removeOverlays();
+  clearSavedState();
   logGameEnd();
   sfxGameOver();
   const { title } = finalTitle();
@@ -4455,9 +4456,11 @@ function loadSavedState() {
     const raw = localStorage.getItem('wist-state');
     if (!raw) return null;
     const saved = JSON.parse(raw);
-    // Only resume if game is actually in progress
-    if (saved && saved.phase && saved.phase !== 'dealing' && saved.roundSequence) return saved;
-    return null;
+    // Only resume a game still in progress: not one whose last round is over
+    if (!saved || !saved.phase || saved.phase === 'dealing' || !saved.roundSequence) return null;
+    const finished = saved.phase === 'gameOver' ||
+      (saved.phase === 'roundResult' && saved.currentRoundIndex + 1 >= saved.roundSequence.length);
+    return finished ? null : saved;
   } catch(e) { return null; }
 }
 

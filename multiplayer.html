@@ -3253,6 +3253,7 @@ function finalRankHTML() {
 
 function showGameOver() {
   removeOverlays();
+  if (!MP.active) clearSavedState();
   sfxGameOver();
   G.phase = 'gameOver';
   logGameEnd();
@@ -3354,7 +3355,11 @@ function toggleBidSuggestion() {
 // ─── LocalStorage Persistence ───
 function saveState() { try{localStorage.setItem('wist-mp-state',JSON.stringify(G));}catch(e){} }
 function loadSavedState() {
-  try{const raw=localStorage.getItem('wist-mp-state');if(!raw)return null;const s=JSON.parse(raw);return(s&&s.phase&&s.phase!=='dealing'&&s.roundSequence)?s:null;}catch(e){return null;}
+  try{const raw=localStorage.getItem('wist-mp-state');if(!raw)return null;const s=JSON.parse(raw);
+    if(!(s&&s.phase&&s.phase!=='dealing'&&s.roundSequence))return null;
+    // a game whose last round is over is not resumable
+    const finished=s.phase==='gameOver'||(s.phase==='roundResult'&&s.currentRoundIndex+1>=s.roundSequence.length);
+    return finished?null:s;}catch(e){return null;}
 }
 function clearSavedState() { try{localStorage.removeItem('wist-mp-state');}catch(e){} }
 
