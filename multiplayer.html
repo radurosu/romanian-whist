@@ -648,7 +648,7 @@ button:disabled { cursor: default; }
 .bc-chips .you { color: var(--ink); text-decoration: underline; text-underline-offset: 3px; }
 .bc-chips .best { color: var(--ink); font-weight: 700; }
 .foot-links .btn-ink { font-size: 17px; color: #fff; text-decoration: none; }
-.foot-links button { font-size: 14px; color: var(--ink-soft); text-decoration: underline; text-underline-offset: 3px; }
+.foot-links button, .foot-links a { font-size: 14px; color: var(--ink-soft); text-decoration: underline; text-underline-offset: 3px; }
 
 table.score-sheet {
   width: 100%;
@@ -1245,6 +1245,7 @@ function logGameEnd() {
   G.gameLog.winner=G.playerNames[winner];G.gameLog.winnerScore=G.scores[winner];
   G.gameLog.sessionId=MP.sessionId||'local';
   G.gameLog.mode=MP.active?'multiplayer':'solo';
+  try{statsAdd(statsRecordFromGame(M(),!!MP.active,G.playerNames.map((_,i)=>i).filter(i=>i!==M()&&isAIPlayer(i))));}catch(e){}
   // Save to localStorage
   try{const logs=JSON.parse(localStorage.getItem('wist-game-logs')||'[]');logs.push(G.gameLog);while(logs.length>50)logs.shift();localStorage.setItem('wist-game-logs',JSON.stringify(logs));}catch(e){}
   // Save to Firebase
@@ -3186,7 +3187,7 @@ function openSheet(id, head, body, foot, closeOnBackdrop) {
     + '</div></div>');
   const ov = document.getElementById(id);
   const sc = ov.querySelector('.sheet-scroll');
-  const target = ov.querySelector('tr.now, tr.final') || [...ov.querySelectorAll('tbody tr:not(.todo)')].pop();
+  const target = ov.querySelector('tr.now, tr.final') || [...ov.querySelectorAll('.score-sheet tbody tr:not(.todo)')].pop();
   if (sc && target) {
     const y = target.getBoundingClientRect().top - sc.getBoundingClientRect().top + sc.scrollTop;
     sc.scrollTop = Math.max(0, y - sc.clientHeight * 0.6);
@@ -3420,6 +3421,39 @@ function finalRankHTML() {
   }).join('') + '</ol>';
 }
 
+// ─── Your stats (recorded here, shown in the solo page) ───
+// One compact record per finished game on this device: the same store and
+// format the solo page reads (index.html?stats=1), with your seat and which
+// seats were bots.
+const STATS_KEY = 'wist-stats', STATS_MAX = 1000;
+function statsLoad() {
+  try { return JSON.parse(localStorage.getItem(STATS_KEY) || '[]'); } catch (e) { return []; }
+}
+function statsSave(list) {
+  list.sort((a, b) => a.t < b.t ? -1 : a.t > b.t ? 1 : 0);
+  while (list.length > STATS_MAX) list.shift();
+  for (let tries = 0; tries < 6; tries++) {
+    try { localStorage.setItem(STATS_KEY, JSON.stringify(list)); return; }
+    catch (e) { list.splice(0, Math.max(1, Math.ceil(list.length / 10))); }   // storage full: drop the oldest tenth
+  }
+}
+function statsAdd(rec) {
+  const list = statsLoad().filter(x => x.t !== rec.t);
+  list.push(rec);
+  statsSave(list);
+}
+// rounds: [cards, bids, tricks taken]; the dealer of round k is seat k % n
+function statsRecordFromGame(me, online, ai) {
+  const rec = { t: (G.gameLog && G.gameLog.timestamp) || new Date().toISOString(), on: online ? 1 : 0,
+    m: G.scoringMode === 'geometric' ? 'geometric' : 'linear', me, names: G.playerNames.slice(), ai, s: G.scores.slice(),
+    r: (G.roundHistory || []).map(h => [h.cardsPerPlayer, h.bids.slice(), h.tricksWon.slice()]) };
+  if (rec.r.length < G.roundSequence.length) rec.early = 1;
+  const checks = bidChecks(), c = [];
+  for (const k in checks) { const x = checks[k]; if (x && x.bid != null) c.push([+k, x.pick, bidCheckBehind(x)]); }
+  if (c.length) rec.c = c;
+  return rec;
+}
+
 function showGameOver() {
   removeOverlays();
   if (!MP.active) clearSavedState();
@@ -3429,9 +3463,10 @@ function showGameOver() {
   if (MP.active && MP.isHost) localStorage.removeItem('mpHostSession');
   if (MP.active && MP.isHost) mpPushGameState();
   const { title } = finalTitle();
+  const stats = '<span class="foot-links"><a href="index.html?stats=1" target="_blank" rel="noopener">Your stats</a></span>';
   const foot = (!MP.active || MP.isHost)
-    ? '<span></span><button class="btn-ink" onclick="resetGame()">Play again</button>'
-    : '<span class="wait">Game over. Thanks for playing.</span>';
+    ? stats + '<button class="btn-ink" onclick="resetGame()">Play again</button>'
+    : stats + '<span class="wait">Game over. Thanks for playing.</span>';
   openSheet('gameover-overlay', `<h2>${title}</h2>${finalRankHTML()}${bidCheckSummaryHTML()}`, sheetTableHTML({ final: true }), foot, false);
 }
 

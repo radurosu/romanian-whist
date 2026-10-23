@@ -654,8 +654,34 @@ button:disabled { cursor: default; }
 .lk-note { font-size: 12.5px; line-height: 1.3; color: var(--graphite); }
 .sheet-head .luck-rounds { font-size: 13px; margin-top: 6px; }
 .luck-rounds .lk-r { color: var(--ink-soft); white-space: nowrap; }
+.st-filters { display: flex; flex-wrap: wrap; gap: 6px 10px; margin-top: 8px; }
+.seg { display: inline-flex; border: 1.5px solid var(--ink-soft); border-radius: 999px; overflow: hidden; }
+.seg button { font-size: 13px; font-weight: 600; padding: 4px 11px; color: var(--ink); }
+.seg button + button { border-left: 1px solid var(--grid); }
+.seg button.on { background: var(--ink); color: #fff; }
+.stats { padding: 6px 16px 22px 18px; font-size: 14.5px; line-height: 1.45; color: var(--graphite); }
+.stats h3 { font-family: var(--hand); font-weight: 700; font-size: 21px; color: var(--ink); margin: 16px 0 4px; }
+.stats p b { color: var(--ink); }
+.st-empty { margin-top: 14px; }
+.st-note { font-size: 12.5px; color: var(--ink-soft); margin-top: 4px; }
+.st-big { display: grid; grid-template-columns: 0.7fr 1fr 1fr; gap: 6px 12px; margin-top: 10px; }
+.st-big div { display: flex; flex-direction: column; min-width: 0; }
+.st-big span { font-size: 12px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; color: var(--ink-soft); }
+.st-big b { font-family: var(--hand); font-size: 30px; line-height: 1.1; color: var(--ink); }
+.st-big small { font-size: 12px; line-height: 1.3; }
+.st-form { display: flex; flex-wrap: wrap; gap: 4px; }
+.st-form span { width: 26px; height: 26px; display: grid; place-items: center; border-radius: 50%; border: 1.5px solid var(--grid);
+  font-family: var(--hand); font-size: 16px; color: var(--ink-soft); background: var(--paper); }
+.st-form span.w { border-color: var(--ink); color: var(--ink); font-weight: 700; background: rgba(255, 226, 60, .45); }
+table.st-table { width: 100%; border-collapse: collapse; font-variant-numeric: tabular-nums; background: var(--paper); }
+.st-table th { font-size: 11.5px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; color: var(--ink-soft); text-align: right; padding: 4px; }
+.st-table td { text-align: right; padding: 5px 4px; border-top: 1px solid var(--grid); white-space: nowrap; }
+.st-table th:first-child, .st-table td:first-child { text-align: left; }
+.st-table td small { color: var(--ink-soft); font-size: 11.5px; }
+.st-table .you { color: var(--ink); font-weight: 700; }
+.st-table .bots { color: var(--ink-soft); font-size: 12px; margin-left: 5px; }
 .foot-links .btn-ink { font-size: 17px; color: #fff; text-decoration: none; }
-.foot-links button { font-size: 14px; color: var(--ink-soft); text-decoration: underline; text-underline-offset: 3px; }
+.foot-links button, .foot-links a { font-size: 14px; color: var(--ink-soft); text-decoration: underline; text-underline-offset: 3px; }
 
 table.score-sheet {
   width: 100%;
@@ -801,6 +827,7 @@ table.score-sheet {
     <div class="setup-actions">
       <div id="resume-slot"></div>
       <a href="multiplayer.html" class="link-ink">Play online with friends</a>
+      <button class="link-ink" onclick="showStats()">Your stats</button>
     </div>
   </div>
 </div>
@@ -1932,6 +1959,7 @@ function logGameEnd() {
   G.gameLog.winnerScore = G.scores[winner];
   G.gameLog.mode = 'solo';
   G.gameLog.bidCheck = bidCheckTotals();
+  statsAdd(statsRecordFromGame(ME, false, G.playerNames.map((_, i) => i).filter(i => i !== ME)));
 
   // Save to localStorage
   try {
@@ -4257,8 +4285,9 @@ function trickLogHTML(tricks) {
   return html + '</div></details>';
 }
 
-function openSheet(id, head, body, foot, closeOnBackdrop) {
-  removeOverlays();
+function openSheet(id, head, body, foot, closeOnBackdrop, stack = false) {
+  if (stack) document.getElementById(id)?.remove();
+  else removeOverlays();
   document.body.insertAdjacentHTML('beforeend',
     `<div class="overlay" id="${id}"${closeOnBackdrop ? ' onclick="if(event.target===this)removeOverlays()"' : ''}>`
     + `<div class="overlay-content sheet" role="dialog" aria-modal="true">`
@@ -4266,7 +4295,7 @@ function openSheet(id, head, body, foot, closeOnBackdrop) {
     + '</div></div>');
   const ov = document.getElementById(id);
   const sc = ov.querySelector('.sheet-scroll');
-  const target = ov.querySelector('tr.now, tr.final') || [...ov.querySelectorAll('tbody tr:not(.todo)')].pop();
+  const target = ov.querySelector('tr.now, tr.final') || [...ov.querySelectorAll('.score-sheet tbody tr:not(.todo)')].pop();
   if (sc && target) {
     const y = target.getBoundingClientRect().top - sc.getBoundingClientRect().top + sc.scrollTop;
     sc.scrollTop = Math.max(0, y - sc.clientHeight * 0.6);
@@ -4666,6 +4695,8 @@ function saveLuck(log) {
     const mine = logs.find(l => l.timestamp === log.timestamp);
     if (mine) { mine.luck = log.luck; localStorage.setItem('wist-game-logs', JSON.stringify(logs)); }
   } catch (e) {}
+  const list = statsLoad(), rec = list.find(r => r.t === log.timestamp);
+  if (rec) { rec.luck = statsLuck(log.luck); statsSave(list); }
   if (fbDb) {
     const key = log.timestamp.replace(/[:.]/g, '-');
     (fbAuthReady || Promise.resolve())
@@ -4673,6 +4704,175 @@ function saveLuck(log) {
       .catch(e => console.warn('Firebase luck save failed', e));
   }
 }
+
+// ─── Your stats ───
+// One compact record per finished game on this device, solo and online, kept
+// apart from the full logs (which keep only the last 50): places, every
+// round's bids and tricks, bid checks and luck vs skill. Older solo games are
+// filled in from those full logs the first time the page opens.
+const STATS_KEY = 'wist-stats', STATS_MAX = 1000;
+function statsLoad() {
+  try { return JSON.parse(localStorage.getItem(STATS_KEY) || '[]'); } catch (e) { return []; }
+}
+function statsSave(list) {
+  list.sort((a, b) => a.t < b.t ? -1 : a.t > b.t ? 1 : 0);
+  while (list.length > STATS_MAX) list.shift();
+  for (let tries = 0; tries < 6; tries++) {
+    try { localStorage.setItem(STATS_KEY, JSON.stringify(list)); return; }
+    catch (e) { list.splice(0, Math.max(1, Math.ceil(list.length / 10))); }   // storage full: drop the oldest tenth
+  }
+}
+function statsAdd(rec) {
+  const list = statsLoad().filter(x => x.t !== rec.t);
+  list.push(rec);
+  statsSave(list);
+}
+function statsLuck(L) { return { bot: L.bot, cards: L.cards, play: L.play, spread: L.spread }; }
+// rounds: [cards, bids, tricks taken]; the dealer of round k is seat k % n
+function statsRecordFromGame(me, online, ai) {
+  const rec = { t: (G.gameLog && G.gameLog.timestamp) || new Date().toISOString(), on: online ? 1 : 0,
+    m: G.scoringMode === 'geometric' ? 'geometric' : 'linear', me, names: G.playerNames.slice(), ai, s: G.scores.slice(),
+    r: (G.roundHistory || []).map(h => [h.cardsPerPlayer, h.bids.slice(), h.tricksWon.slice()]) };
+  if (rec.r.length < G.roundSequence.length) rec.early = 1;
+  const checks = bidChecks(), c = [];
+  for (const k in checks) { const x = checks[k]; if (x && x.bid != null) c.push([+k, x.pick, bidCheckBehind(x)]); }
+  if (c.length) rec.c = c;
+  if (G.gameLog && G.gameLog.luck) rec.luck = statsLuck(G.gameLog.luck);
+  return rec;
+}
+function statsFromLog(log) {
+  if (!log || !log.timestamp || !log.rounds || !log.rounds.length || !log.finalScores || !log.players
+    || log.players[0] !== 'You' || (log.mode && log.mode !== 'solo')) return null;
+  const n = log.players.length, seats = log.players.map((_, i) => i);
+  try {
+    const rec = { t: log.timestamp, on: 0, m: log.scoringMode === 'geometric' ? 'geometric' : 'linear', me: 0, names: log.players.slice(),
+      ai: seats.slice(1), s: seats.map(i => log.finalScores[i].score),
+      r: log.rounds.map(r => [r.cardsPerPlayer, seats.map(i => r.results[i].bid), seats.map(i => r.results[i].won)]) };
+    if (rec.r.length < computeRoundSequence(n).length) rec.early = 1;
+    const c = log.rounds.map((r, k) => r.bidCheck ? [k, r.bidCheck.pick,
+      Math.round((r.bidCheck.val[r.bidCheck.pick] - r.bidCheck.val[r.results[0].bid]) * 10) / 10] : null).filter(Boolean);
+    if (c.length) rec.c = c;
+    if (log.luck) rec.luck = statsLuck(log.luck);
+    return rec;
+  } catch (e) { return null; }
+}
+function statsAll() {
+  const list = statsLoad(), have = new Set(list.map(r => r.t));
+  let added = 0;
+  try {
+    for (const log of JSON.parse(localStorage.getItem('wist-game-logs') || '[]')) {
+      const rec = have.has(log.timestamp) ? null : statsFromLog(log);
+      if (rec) { list.push(rec); have.add(rec.t); added++; }
+    }
+  } catch (e) {}
+  if (added) statsSave(list);
+  return list;
+}
+
+function statsCompute(list) {
+  const acc = () => ({ n: 0, made: 0, diff: 0, pts: 0 });
+  const S = { games: list.length, wins: 0, fair: 0, place: 0, seats: 0, form: [], cards: {},
+    last: { you: [0, 0], bots: [0, 0] }, other: { you: [0, 0], bots: [0, 0] }, opp: {},
+    bc: { games: 0, bids: 0, behind: 0, flagged: 0 }, luck: [] };
+  for (const g of list) {
+    const n = g.names.length, me = g.me, sc = g.s;
+    const place = 1 + sc.filter((x, i) => i !== me && x > sc[me]).length;
+    if (place === 1) S.wins++;
+    S.fair += 1 / n; S.place += place; S.seats += n;
+    S.form.push({ place, n, score: sc[me], m: g.m, t: g.t });
+    const ai = new Set(g.ai);
+    g.r.forEach(([cpp, bids, won], k) => {
+      const row = S.cards[cpp] || (S.cards[cpp] = { you: acc(), bots: acc() });
+      for (let p = 0; p < n; p++) {
+        if (p !== me && !ai.has(p)) continue;
+        const who = p === me ? 'you' : 'bots', a = row[who], made = won[p] === bids[p] ? 1 : 0;
+        a.n++; a.made += made; a.diff += won[p] - bids[p]; a.pts += scoreRound(won[p], bids[p], g.m);
+        const L = (p === k % n ? S.last : S.other)[who];   // the dealer bids last
+        L[0]++; L[1] += made;
+      }
+    });
+    for (let j = 0; j < n; j++) {
+      if (j === me) continue;
+      const o = S.opp[g.names[j]] || (S.opp[g.names[j]] = { n: 0, ahead: 0, margin: 0, bot: ai.has(j) });
+      o.n++; if (sc[me] > sc[j]) o.ahead++; o.margin += sc[me] - sc[j];
+    }
+    if (g.c) { S.bc.games++; for (const [, , behind] of g.c) { S.bc.bids++; S.bc.behind += behind; if (behind > 1) S.bc.flagged++; } }
+    if (g.luck) S.luck.push(g.luck);
+  }
+  return S;
+}
+
+let statsFilter = { where: 'all', mode: 'all' };
+try { Object.assign(statsFilter, JSON.parse(localStorage.getItem('wist-stats-filter') || '{}')); } catch (e) {}
+function setStatsFilter(k, v) {
+  statsFilter[k] = v;
+  try { localStorage.setItem('wist-stats-filter', JSON.stringify(statsFilter)); } catch (e) {}
+  renderStats();
+}
+function pct(a, b) { return b ? Math.round(100 * a / b) + '%' : '–'; }
+function signedFixed(v, digits) { const t = Math.abs(v).toFixed(digits); return +t === 0 ? t : (v > 0 ? '+' : '−') + t; }
+function avgTxt(sum, n, digits = 1) { return n ? signedFixed(sum / n, digits) : '–'; }
+function statsHTML(all) {
+  const list = all.filter(g => (statsFilter.where === 'all' || (statsFilter.where === 'online') === !!g.on)
+    && (statsFilter.mode === 'all' || g.m === statsFilter.mode));
+  if (!list.length) return `<div class="stats"><p class="st-empty">${all.length ? 'No games match these filters yet.' : 'No finished games on this device yet. Your record starts with the next game you finish.'}</p></div>`;
+  const S = statsCompute(list);
+  const pair = (y, b) => `<span class="you">${y}</span><span class="bots">${b}</span>`;
+  let h = '<div class="stats">';
+  h += `<div class="st-big"><div><span>Games</span><b>${S.games}</b></div>`
+    + `<div><span>Won</span><b>${pct(S.wins, S.games)}</b><small>${S.wins} game${S.wins === 1 ? '' : 's'}; fair share ${pct(S.fair, S.games)}</small></div>`
+    + `<div><span>Place</span><b>${(S.place / S.games).toFixed(1)}</b><small>average, of ${(S.seats / S.games).toFixed(1)} players</small></div></div>`;
+  const form = S.form.slice(-15);
+  h += `<h3>Last ${form.length} games</h3><div class="st-form">` + form.map(f =>
+    `<span class="${f.place === 1 ? 'w' : ''}" title="${ordinal(f.place)} of ${f.n}, ${f.score} points, ${f.m === 'geometric' ? 'geometric' : 'classic'}">${f.place}</span>`).join('')
+    + '</div><p class="st-note">Your place in each game, newest on the right.</p>';
+  h += '<h3>Bids by hand size</h3><table class="st-table"><thead><tr><th>Cards</th><th>Rounds</th><th>Made</th><th>Took − bid</th><th>Points</th></tr></thead><tbody>';
+  for (const cpp of Object.keys(S.cards).map(Number).sort((a, b) => a - b)) {
+    const { you: y, bots: b } = S.cards[cpp];
+    h += `<tr><td>${cpp}</td><td>${y.n}</td><td>${pair(pct(y.made, y.n), pct(b.made, b.n))}</td>`
+      + `<td>${pair(avgTxt(y.diff, y.n, 2), avgTxt(b.diff, b.n, 2))}</td><td>${pair(avgTxt(y.pts, y.n), avgTxt(b.pts, b.n))}</td></tr>`;
+  }
+  h += '</tbody></table><p class="st-note"><b>Bold</b>: you. Grey: the bots in the same games. Took − bid above zero means you take more tricks than you bid.</p>';
+  h += `<h3>Bidding last</h3><p>When you deal and bid last, with one total ruled out, you make <b>${pct(S.last.you[1], S.last.you[0])}</b> of your bids `
+    + `(bots ${pct(S.last.bots[1], S.last.bots[0])}). From other seats: <b>${pct(S.other.you[1], S.other.you[0])}</b> (bots ${pct(S.other.bots[1], S.other.bots[0])}).</p>`;
+  if (S.bc.bids) {
+    h += `<h3>Bid check</h3><p>Over ${S.bc.bids} checked bids in ${S.bc.games} game${S.bc.games > 1 ? 's' : ''}, your bids average <b>${fmtPts(S.bc.behind / S.bc.bids)}</b> points behind the engine's pick `
+      + `(<b>${fmtPts(S.bc.behind / S.bc.games)}</b> a game). ${pct(S.bc.flagged, S.bc.bids)} of bids were more than a point behind.</p>`;
+  }
+  if (S.luck.length) {
+    const N = S.luck.length, mean = k => S.luck.reduce((a, L) => a + L[k], 0) / N;
+    const play = mean('play'), sd = N > 1 ? Math.sqrt(S.luck.reduce((a, L) => a + (L.play - play) ** 2, 0) / (N - 1)) : 0;
+    h += `<h3>Luck vs skill</h3><p>Over ${N} game${N > 1 ? 's' : ''} replayed with a bot in your seat: your cards averaged <b>${signed(Math.round(mean('cards') * 10) / 10)}</b> a game against the table, `
+      + `your play <b>${signed(Math.round(play * 10) / 10)}</b> a game against the bot${N > 1 ? ` (± ${fmtPts(sd / Math.sqrt(N))}, one standard error)` : ''}.</p>`
+      + `<p class="st-note">${N < 10 ? 'A single game swings about ±10 points, so give this a few more games before reading much into it.' : 'Play above zero means you score more than a strong bot would with your exact cards.'}</p>`;
+  }
+  const opp = Object.entries(S.opp).filter(([, o]) => o.n >= 2).sort((a, b) => b[1].n - a[1].n);
+  if (opp.length) {
+    h += '<h3>Against each player</h3><table class="st-table"><thead><tr><th>Player</th><th>Games</th><th>You ahead</th><th>Margin</th></tr></thead><tbody>'
+      + opp.map(([nm, o]) => `<tr><td>${escHTML(nm)}${o.bot ? '' : ' <small>(person)</small>'}</td><td>${o.n}</td><td>${pct(o.ahead, o.n)}</td><td>${avgTxt(o.margin, o.n)}</td></tr>`).join('')
+      + '</tbody></table><p class="st-note">You ahead: games where you finished above them. Margin: your score minus theirs, per game.</p>';
+  }
+  return h + '</div>';
+}
+function statsHeadHTML(all) {
+  const seg = (k, opts) => `<span class="seg" role="group">` + opts.map(([v, label]) =>
+    `<button class="${statsFilter[k] === v ? 'on' : ''}" aria-pressed="${statsFilter[k] === v}" onclick="setStatsFilter('${k}', '${v}')">${label}</button>`).join('') + '</span>';
+  return `<h2>Your stats</h2><p class="sub">${all.length} finished game${all.length === 1 ? '' : 's'} on this device.</p>`
+    + `<div class="st-filters">${seg('where', [['all', 'All'], ['solo', 'Solo'], ['online', 'Online']])}${seg('mode', [['all', 'Both'], ['linear', 'Classic'], ['geometric', 'Geometric']])}</div>`;
+}
+function renderStats() {
+  const ov = document.getElementById('stats-overlay');
+  if (!ov) return;
+  const all = statsAll();
+  ov.querySelector('.sheet-head').innerHTML = statsHeadHTML(all);
+  ov.querySelector('.sheet-scroll').innerHTML = statsHTML(all);
+}
+function showStats(stack = false) {
+  const all = statsAll();
+  openSheet('stats-overlay', statsHeadHTML(all), statsHTML(all),
+    '<span></span><button class="btn-ink" onclick="closeStats()">Back</button>', false, stack);
+}
+function closeStats() { document.getElementById('stats-overlay')?.remove(); }
 
 function showGameOver() {
   removeOverlays();
@@ -4682,7 +4882,7 @@ function showGameOver() {
   const { title } = finalTitle();
   openSheet('gameover-overlay', `<h2>${title}</h2>${finalRankHTML()}<div id="luck-box" class="luck"></div>${bidCheckSummaryHTML()}`,
     sheetTableHTML({ final: true }),
-    '<span></span><button class="btn-ink" onclick="resetGame()">Play again</button>', false);
+    '<span class="foot-links"><button onclick="showStats(true)">Your stats</button></span><button class="btn-ink" onclick="resetGame()">Play again</button>', false);
   startLuckCheck();
 }
 
@@ -4939,6 +5139,7 @@ window.addEventListener('DOMContentLoaded', () => {
     return;
   }
 
+  if (params.get('stats') === '1') showStats();
   const saved = loadSavedState();
   if (saved) {
     document.getElementById('resume-slot').innerHTML =
