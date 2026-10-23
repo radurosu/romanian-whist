@@ -643,6 +643,17 @@ button:disabled { cursor: default; }
 .bc-chips { display: inline-flex; flex-wrap: wrap; gap: 2px 8px; font-size: 13px; color: var(--ink-soft); }
 .bc-chips .you { color: var(--ink); text-decoration: underline; text-underline-offset: 3px; }
 .bc-chips .best { color: var(--ink); font-weight: 700; }
+.luck { margin-top: 8px; }
+.luck:empty { display: none; }
+.luck-wait b { font-variant-numeric: tabular-nums; }
+.luck-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 4px 14px; }
+.luck-grid .lk { display: flex; flex-direction: column; min-width: 0; }
+.lk-label { font-size: 12px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; color: var(--ink-soft); }
+.luck-grid .lk b { font-family: var(--hand); font-size: 26px; line-height: 1.1; color: var(--ink); }
+.luck-grid .lk b.neg { color: var(--ink-red); }
+.lk-note { font-size: 12.5px; line-height: 1.3; color: var(--graphite); }
+.sheet-head .luck-rounds { font-size: 13px; margin-top: 6px; }
+.luck-rounds .lk-r { color: var(--ink-soft); white-space: nowrap; }
 .foot-links .btn-ink { font-size: 17px; color: #fff; text-decoration: none; }
 .foot-links button { font-size: 14px; color: var(--ink-soft); text-decoration: underline; text-underline-offset: 3px; }
 
@@ -1837,6 +1848,7 @@ function initGameLog() {
 function logRoundStart() {
   G.gameLog._currentRound = {
     roundIdx: G.currentRoundIndex,
+    dealer: G.dealerIndex,
     cardsPerPlayer: G.cardsPerPlayer,
     trump: G.trumpCard ? G.trumpCard.rank + G.trumpCard.suit : null,
     trumpSuit: G.trumpSuit,
@@ -4476,18 +4488,206 @@ function finalRankHTML() {
   }).join('') + '</ol>';
 }
 
+// ─── Luck vs skill ───
+// After the game a bot replays your seat with the same deals - every hand,
+// trump and dealer - while the other seats keep their bots. Your score minus
+// the bot's is your play; the bot's score minus the table average is your
+// cards. Replays vary a lot (a bot's score on the same deals swings about ±10),
+// so several run in parallel workers built from this very script: the real
+// engine, off the main thread.
+// The yardstick is one of the strongest all-round bots, never one already at
+// the table (the result would name the same bot twice).
+const LUCK_BOTS = ['Katya', 'Viktor', 'Sniper', 'Sasha'], LUCK_RUNS = 8;
+function luckBot() { return LUCK_BOTS.find(b => !G.playerNames.includes(b)) || LUCK_BOTS[0]; }
+let luckWorkers = [];
+function parseCardStr(s) {
+  const suit = SUITS.find(x => s.endsWith(x));
+  return { rank: s.slice(0, s.length - suit.length), suit };
+}
+function replayDeals(deals, seq, names, scoringMode) {
+  const n = names.length;
+  G = { numPlayers: n, scoringMode, playerNames: names.slice(), roundSequence: seq.slice(), currentRoundIndex: 0, dealerIndex: 0,
+    cardsPerPlayer: 0, trumpCard: null, trumpSuit: null, bids: new Array(n).fill(null), currentBidderIndex: 0, biddingComplete: false,
+    hands: [], currentTrick: [], trickLeaderIndex: 0, tricksWon: new Array(n).fill(0), scores: new Array(n).fill(0), roundHistory: [],
+    phase: 'dealing', trickWinnerIndex: -1, playedCards: [], fullDeck: buildDeck(n), knownVoids: {}, opponentStats: {},
+    gameLog: null, trickHistory: [], lastTrick: null };
+  for (let i = 0; i < n; i++) G.opponentStats[i] = { bids: 0, made: 0, bidSum: 0, wonSum: 0 };
+  const perRound = [];
+  deals.forEach((d, r) => {
+    G.currentRoundIndex = d.round; G.dealerIndex = d.dealer; G.cardsPerPlayer = d.cpp;
+    G.playedCards = []; G.trickHistory = []; G.lastTrick = null;
+    G.knownVoids = {};
+    for (let i = 0; i < n; i++) G.knownVoids[i] = {};
+    G.hands = d.hands.map(h => h.map(parseCardStr));
+    G.trumpCard = d.trump ? parseCardStr(d.trump) : null;
+    G.trumpSuit = G.trumpCard ? G.trumpCard.suit : null;
+    G.bids = new Array(n).fill(null); G.tricksWon = new Array(n).fill(0); G.biddingComplete = false; G.currentTrick = [];
+    G.phase = 'bidding';
+    for (let k = 0; k < n; k++) {
+      const p = (G.dealerIndex + 1 + k) % n;
+      G.currentBidderIndex = p;
+      G.bids[p] = computeAIBid(p);
+    }
+    G.biddingComplete = true; G.phase = 'playing'; G.trickLeaderIndex = (G.dealerIndex + 1) % n;
+    for (let t = 0; t < d.cpp; t++) {
+      G.currentTrick = [];
+      for (let k = 0; k < n; k++) {
+        const p = (G.trickLeaderIndex + k) % n;
+        const led = G.currentTrick.length ? G.currentTrick[0].card.suit : null;
+        const card = chooseAICard(p, getLegalMoves(G.hands[p], led, G.trumpSuit), led);
+        G.hands[p].splice(G.hands[p].findIndex(c => c.rank === card.rank && c.suit === card.suit), 1);
+        G.currentTrick.push({ playerIndex: p, card });
+        G.playedCards.push(card);
+        if (led && card.suit !== led) G.knownVoids[p][led] = true;
+      }
+      const w = currentWinner().playerIndex;
+      G.tricksWon[w]++;
+      G.lastTrick = { entries: G.currentTrick.slice(), winnerIndex: w, leaderIndex: G.trickLeaderIndex };
+      G.trickHistory.push(G.lastTrick);
+      G.trickLeaderIndex = w;
+    }
+    G.currentTrick = [];
+    const pts = G.bids.map((b, p) => scoreRound(G.tricksWon[p], b));
+    pts.forEach((x, p) => {
+      G.scores[p] += x;
+      const st = G.opponentStats[p];
+      st.bids++; st.bidSum += G.bids[p]; st.wonSum += G.tricksWon[p];
+      if (G.tricksWon[p] === G.bids[p]) st.made++;
+    });
+    G.roundHistory.push({ cardsPerPlayer: d.cpp, trumpSuit: G.trumpSuit, bids: G.bids.slice(), tricksWon: G.tricksWon.slice(),
+      roundScores: pts, cumulativeScores: G.scores.slice() });
+    perRound.push(pts);
+  });
+  return { scores: G.scores.slice(), perRound };
+}
+// The deals of the game just played, from its log
+function luckDeals() {
+  if (!G.gameLog || !G.gameLog.rounds || !G.gameLog.rounds.length) return null;
+  const n = G.numPlayers;
+  return G.gameLog.rounds.map((r, k) => ({
+    round: r.roundIdx ?? k, cpp: r.cardsPerPlayer, dealer: r.dealer ?? ((r.roundIdx ?? k) % n), trump: r.trump,
+    hands: Array.from({ length: n }, (_, i) => r.hands[i]) }));
+}
+function luckWorkerURL() {
+  const main = [...document.scripts].find(s => !s.src && s.textContent.includes('function replayDeals('));
+  if (!main || typeof Worker === 'undefined' || typeof Blob === 'undefined') return null;
+  const src = `(() => {
+const noop = () => {};
+const el = () => ({ style: {}, dataset: {}, classList: { add: noop, remove: noop, toggle: noop, contains: () => false },
+  insertAdjacentHTML: noop, appendChild: noop, querySelector: () => null, querySelectorAll: () => [], addEventListener: noop,
+  setProperty: noop, focus: noop, remove: noop, value: '', checked: false, innerHTML: '', textContent: '' });
+const document = { getElementById: el, querySelector: () => null, querySelectorAll: () => [], createElement: el,
+  addEventListener: noop, body: el(), documentElement: el(), fonts: { ready: Promise.resolve() } };
+const window = { addEventListener: noop };
+const localStorage = { getItem: () => null, setItem: noop, removeItem: noop };
+const navigator = {}, location = { search: '', hostname: 'replay', port: '', pathname: '/', origin: 'null' };
+const console = { log: noop, warn: noop, error: noop, info: noop };
+const alert = noop, confirm = () => true;
+${main.textContent}
+self.onmessage = e => {
+  const { deals, seq, names, mode, runs } = e.data;
+  for (let k = 0; k < runs; k++) self.postMessage(replayDeals(deals, seq, names, mode));
+};
+})();`;
+  return URL.createObjectURL(new Blob([src], { type: 'text/javascript' }));
+}
+function stopLuckCheck() {
+  luckWorkers.forEach(w => w.terminate());
+  luckWorkers = [];
+}
+function startLuckCheck() {
+  stopLuckCheck();
+  const box = document.getElementById('luck-box');
+  const deals = luckDeals();
+  if (!box || !deals) { if (box) box.remove(); return; }
+  if (G.gameLog.luck) { box.innerHTML = luckResultHTML(G.gameLog.luck); return; }
+  let url = null;
+  try { url = luckWorkerURL(); } catch (e) {}
+  if (!url) { box.remove(); return; }
+  const bot = luckBot();
+  const names = G.playerNames.map((nm, i) => i === ME ? bot : nm === 'Jev' ? 'Grok' : nm);  // Jev's fallback is Grok
+  const job = { deals, seq: G.roundSequence.slice(), names, mode: G.scoringMode || 'linear' };
+  const you = G.scores[ME], yourRounds = G.roundHistory.slice(0, deals.length).map(h => h.roundScores[ME]);
+  const log = G.gameLog, results = [];
+  const nw = Math.max(1, Math.min(4, (navigator.hardwareConcurrency || 2) - 1));
+  const progress = () => { box.innerHTML = `<p class="sub luck-wait">Luck or skill? Replaying your cards with ${bot} in your seat… <b>${results.length}/${LUCK_RUNS}</b></p>`; };
+  progress();
+  for (let w = 0; w < nw; w++) {
+    const runs = Math.floor(LUCK_RUNS / nw) + (w < LUCK_RUNS % nw ? 1 : 0);
+    if (!runs) continue;
+    let worker;
+    try { worker = new Worker(url); } catch (e) { break; }
+    worker.onmessage = e => {
+      results.push(e.data);
+      if (results.length < LUCK_RUNS) { if (document.getElementById('luck-box') === box) progress(); return; }
+      stopLuckCheck();
+      URL.revokeObjectURL(url);
+      log.luck = summarizeLuck(bot, results, you, yourRounds, deals);
+      saveLuck(log);
+      if (document.getElementById('luck-box') === box) box.innerHTML = luckResultHTML(log.luck);
+    };
+    worker.onerror = e => {
+      console.warn('Luck replay failed', e.message);
+      stopLuckCheck();
+      if (document.getElementById('luck-box') === box) box.remove();
+    };
+    worker.postMessage(Object.assign({ runs }, job));
+    luckWorkers.push(worker);
+  }
+  if (!luckWorkers.length) box.remove();
+}
+function summarizeLuck(bot, results, you, yourRounds, deals) {
+  const R = results.length, mean = a => a.reduce((x, y) => x + y, 0) / a.length;
+  const seat = results.map(r => r.scores[ME]);
+  const table = results.map(r => mean(r.scores));
+  const botAvg = mean(seat), tableAvg = mean(table);
+  const sd = R > 1 ? Math.sqrt(seat.reduce((a, x) => a + (x - botAvg) ** 2, 0) / (R - 1)) : 0;
+  // per round: how much more the bot scored than you, averaged over replays
+  const gaps = deals.map((d, k) => ({ round: d.round, cpp: d.cpp, trump: d.trump ? parseCardStr(d.trump).suit : null,
+    you: yourRounds[k], bot: Math.round(mean(results.map(r => r.perRound[k][ME])) * 10) / 10 }));
+  return { bot, runs: R, you, botAvg: Math.round(botAvg * 10) / 10, tableAvg: Math.round(tableAvg * 10) / 10,
+    cards: Math.round((botAvg - tableAvg) * 10) / 10, play: Math.round((you - botAvg) * 10) / 10,
+    spread: Math.round(Math.sqrt(sd * sd + sd * sd / R)), gaps };
+}
+function luckResultHTML(L) {
+  const num = x => `<b class="${x < 0 ? 'neg' : ''}">${x > 0 ? '+' : x < 0 ? '−' : ''}${fmtPts(Math.abs(x))}</b>`;
+  const worst = L.gaps.filter(g => g.bot - g.you >= 3).sort((a, b) => (b.bot - b.you) - (a.bot - a.you)).slice(0, 3);
+  const rounds = worst.length ? `<p class="sub luck-rounds">${L.bot} gained most on you in round${worst.length > 1 ? 's' : ''} `
+    + worst.map(g => `${g.round + 1} <span class="lk-r">(${g.cpp}${g.trump ? SUIT_SYMBOL[g.trump] : ''}: you ${signed(g.you)}, ${L.bot} ${signed(g.bot)})</span>`).join(', ') + '.</p>' : '';
+  return `<div class="luck-grid">`
+    + `<div class="lk"><span class="lk-label">Your cards</span>${num(L.cards)}<span class="lk-note">${L.bot} averaged ${fmtPts(L.botAvg)} with them; the table ${fmtPts(L.tableAvg)}</span></div>`
+    + `<div class="lk"><span class="lk-label">Your play</span>${num(L.play)}<span class="lk-note">you ${L.you} vs ${L.bot}'s ${fmtPts(L.botAvg)}; one game swings ±${L.spread}</span></div>`
+    + `</div>${rounds}`;
+}
+// Keep the result with the game: in the log on this device and in the cloud copy
+function saveLuck(log) {
+  try {
+    const logs = JSON.parse(localStorage.getItem('wist-game-logs') || '[]');
+    const mine = logs.find(l => l.timestamp === log.timestamp);
+    if (mine) { mine.luck = log.luck; localStorage.setItem('wist-game-logs', JSON.stringify(logs)); }
+  } catch (e) {}
+  if (fbDb) {
+    const key = log.timestamp.replace(/[:.]/g, '-');
+    (fbAuthReady || Promise.resolve())
+      .then(() => fbDb.ref(`gameLogs/${key}/luck`).set(log.luck))
+      .catch(e => console.warn('Firebase luck save failed', e));
+  }
+}
+
 function showGameOver() {
   removeOverlays();
   clearSavedState();
   logGameEnd();
   sfxGameOver();
   const { title } = finalTitle();
-  openSheet('gameover-overlay', `<h2>${title}</h2>${finalRankHTML()}${bidCheckSummaryHTML()}`,
+  openSheet('gameover-overlay', `<h2>${title}</h2>${finalRankHTML()}<div id="luck-box" class="luck"></div>${bidCheckSummaryHTML()}`,
     sheetTableHTML({ final: true }),
     '<span></span><button class="btn-ink" onclick="resetGame()">Play again</button>', false);
+  startLuckCheck();
 }
 
 function resetGame() {
+  stopLuckCheck();
   removeOverlays();
   document.getElementById('game-screen').classList.remove('active');
   document.getElementById('setup-screen').style.display = 'flex';
