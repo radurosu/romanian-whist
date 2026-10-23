@@ -641,6 +641,7 @@ button:disabled { cursor: default; }
 .sheet-foot .wait { font-size: 15px; color: var(--graphite); }
 .foot-links { display: flex; gap: 16px; align-items: center; }
 .sheet-head .out-note { color: var(--ink-red); font-weight: 600; }
+.sheet-head .won-note { color: var(--ink); font-weight: 600; }
 .foot-links .btn-ink { font-size: 17px; color: #fff; text-decoration: none; }
 .foot-links button { font-size: 14px; color: var(--ink-soft); text-decoration: underline; text-underline-offset: 3px; }
 
@@ -3209,10 +3210,23 @@ function roundPointsRange(cpp) {
   const tri = n => n * (n + 1) / 2;
   return G.scoringMode === 'geometric' ? { max: 5 + tri(cpp), min: -tri(cpp) } : { max: 5 + cpp, min: -cpp };
 }
-function canStillWin(p) {
+function remainingRange() {
   let up = 0, down = 0;
   for (const cpp of G.roundSequence.slice(G.currentRoundIndex + 1)) { const r = roundPointsRange(cpp); up += r.max; down += r.min; }
+  return { up, down };
+}
+function canStillWin(p) {
+  const { up, down } = remainingRange();
   return G.scores.every((s, i) => i === p || s + down <= G.scores[p] + up);
+}
+// The inverse: p finishes strictly first even missing by the most every round
+// while every opponent makes the largest bid every round.
+function hasClinched(p) {
+  const { up, down } = remainingRange();
+  return G.scores.every((s, i) => i === p || s + up < G.scores[p] + down);
+}
+function humanClinched() {
+  return G.playerNames.map((_, i) => i).filter(i => !isAIPlayer(i)).find(hasClinched) ?? -1;
 }
 function humansOut() {
   const humans = G.playerNames.map((_, i) => i).filter(i => !isAIPlayer(i));
@@ -3224,15 +3238,17 @@ function showRoundResult(roundScores) {
   const isLast = r + 1 >= G.roundSequence.length;
   const trumpStr = G.trumpSuit ? `${SUIT_SYMBOL[G.trumpSuit]} trump` : 'no trump';
   const out = !isLast && humansOut();
+  const champ = isLast || out ? -1 : humanClinched();
   const outNote = out ? `<p class="sub out-note">${(() => { const h = G.playerNames.map((_, i) => i).filter(i => !isAIPlayer(i)); return h.length === 1 && h[0] === M() ? 'You' : 'No human player'; })()} can no longer finish first, even with perfect rounds from here.</p>` : '';
-  const head = `<h2>Round ${r + 1}<small>${G.cardsPerPlayer} card${G.cardsPerPlayer > 1 ? 's' : ''}, ${trumpStr}</small></h2><p class="sub">${roundSummary(roundScores)}</p>${outNote}`;
+  const winNote = champ >= 0 ? `<p class="sub won-note">${champ === M() ? 'You have' : escHTML(G.playerNames[champ]) + ' has'} clinched first place. Nobody can catch up, even with perfect rounds from here.</p>` : '';
+  const head = `<h2>Round ${r + 1}<small>${G.cardsPerPlayer} card${G.cardsPerPlayer > 1 ? 's' : ''}, ${trumpStr}</small></h2><p class="sub">${roundSummary(roundScores)}</p>${outNote}${winNote}`;
   const body = sheetTableHTML({ highlight: (G.roundHistory || []).length - 1 });
   const canAdvance = !MP.active || MP.isHost;
   const foot = (trickLogHTML(G.trickHistory) || '<span></span>') + (!canAdvance
     ? `<span class="wait">${isLast ? 'Waiting for the host to show final scores…' : 'Waiting for the host to deal…'}</span>`
     : isLast
     ? '<button class="btn-ink" onclick="showGameOver()">See final scores</button>'
-    : out
+    : out || champ >= 0
     ? '<span class="foot-links"><button onclick="nextRound()">Play on</button><button class="btn-ink" onclick="showGameOver()">End game</button></span>'
     : '<button class="btn-ink" onclick="nextRound()">Next round</button>');
   openSheet('round-overlay', head, body, foot, false);
