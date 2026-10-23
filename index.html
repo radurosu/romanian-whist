@@ -1009,8 +1009,10 @@ const RO = {
   "The engine slightly prefers {pick}; your {bid} is within a point.": "Motorul preferă puțin {pick}; {bid} e la mai puțin de un punct.",
   "bid {b}: {v}": "licitat {b}: {v}",
   "Expected points for each bid, as the engine saw your hand when you bid": "Punctele așteptate pentru fiecare licitație, așa cum vedea motorul cărțile tale când ai licitat",
-  "{flagged} of your {rounds} checked bids were over a point behind the engine's pick; about {pts} points in all.": "{flagged} din cele {rounds} licitații verificate au fost cu peste un punct sub alegerea motorului; cam {pts} puncte în total.",
-  "All {rounds} checked bids were within a point of the engine's pick.": "Toate cele {rounds} licitații verificate au fost la mai puțin de un punct de alegerea motorului.",
+  "{flagged} of your {bids} were over a point behind the engine's pick; about {pts} points in all.": "{flagged} din cele {bids} au fost cu peste un punct sub alegerea motorului; cam {pts} puncte în total.",
+  "1 of your {bids} was over a point behind the engine's pick; about {pts} points in all.": "Una din cele {bids} a fost cu peste un punct sub alegerea motorului; cam {pts} puncte în total.",
+  "All {bids} were within a point of the engine's pick.": "Toate cele {bids} au fost la mai puțin de un punct de alegerea motorului.",
+  "{n} no trump": "{n} fără atu",
   " and ": " și ",
   "{names} tie at {n}": "{names}: egalitate la {n}",
   "A shared win.": "O victorie împărțită.",
@@ -4775,9 +4777,11 @@ function bidCheckTotals() {
 function bidCheckSummaryHTML() {
   const tot = bidCheckTotals();
   if (!tot.rounds) return '';
-  const text = tot.flagged
-    ? t("{flagged} of your {rounds} checked bids were over a point behind the engine's pick; about {pts} points in all.", { flagged: tot.flagged, rounds: tot.rounds, pts: fmtPts(tot.behind) })
-    : t("All {rounds} checked bids were within a point of the engine's pick.", { rounds: tot.rounds });
+  const bids = nOf(tot.rounds, 'checked bid', 'checked bids', 'licitație verificată', 'licitații verificate');
+  const text = tot.flagged > 1
+    ? t("{flagged} of your {bids} were over a point behind the engine's pick; about {pts} points in all.", { flagged: tot.flagged, bids, pts: fmtPts(tot.behind) })
+    : tot.flagged ? t("1 of your {bids} was over a point behind the engine's pick; about {pts} points in all.", { bids, pts: fmtPts(tot.behind) })
+    : t("All {bids} were within a point of the engine's pick.", { bids });
   return `<p class="sub bid-check${tot.flagged ? ' flag' : ''}"><span class="bc-verdict">${t('Bid check:')} ${text}</span></p>`;
 }
 
@@ -5001,7 +5005,7 @@ function luckResultHTML(L) {
   const num = x => `<b class="${x < 0 ? 'neg' : ''}">${x > 0 ? '+' : x < 0 ? '−' : ''}${fmtPts(Math.abs(x))}</b>`;
   const worst = L.gaps.filter(g => g.bot - g.you >= 3).sort((a, b) => (b.bot - b.you) - (a.bot - a.you)).slice(0, 3);
   const items = worst.map(g => `${g.round + 1} <span class="lk-r">(${t('{deal}: you {you}, {bot} {botpts}',
-    { deal: g.cpp + (g.trump ? SUIT_SYMBOL[g.trump] : ''), you: signed(g.you), bot: L.bot, botpts: signed(g.bot) })})</span>`);
+    { deal: g.trump ? g.cpp + SUIT_SYMBOL[g.trump] : t('{n} no trump', { n: g.cpp }), you: signed(g.you), bot: L.bot, botpts: signed(g.bot) })})</span>`);
   const rounds = worst.length ? `<p class="sub luck-rounds">${t(worst.length > 1 ? '{bot} gained most on you in rounds {list}.' : '{bot} gained most on you in round {list}.',
     { bot: L.bot, list: items.join(', ') })}</p>` : '';
   return `<div class="luck-grid">`

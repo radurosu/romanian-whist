@@ -1132,8 +1132,10 @@ const RO = {
   "The engine slightly prefers {pick}; your {bid} is within a point.": "Motorul preferă puțin {pick}; {bid} e la mai puțin de un punct.",
   "bid {b}: {v}": "licitat {b}: {v}",
   "Expected points for each bid, as the engine saw your hand when you bid": "Punctele așteptate pentru fiecare licitație, așa cum vedea motorul cărțile tale când ai licitat",
-  "{flagged} of your {rounds} checked bids were over a point behind the engine's pick; about {pts} points in all.": "{flagged} din cele {rounds} licitații verificate au fost cu peste un punct sub alegerea motorului; cam {pts} puncte în total.",
-  "All {rounds} checked bids were within a point of the engine's pick.": "Toate cele {rounds} licitații verificate au fost la mai puțin de un punct de alegerea motorului.",
+  "{flagged} of your {bids} were over a point behind the engine's pick; about {pts} points in all.": "{flagged} din cele {bids} au fost cu peste un punct sub alegerea motorului; cam {pts} puncte în total.",
+  "1 of your {bids} was over a point behind the engine's pick; about {pts} points in all.": "Una din cele {bids} a fost cu peste un punct sub alegerea motorului; cam {pts} puncte în total.",
+  "All {bids} were within a point of the engine's pick.": "Toate cele {bids} au fost la mai puțin de un punct de alegerea motorului.",
+  "{n} no trump": "{n} fără atu",
   " and ": " și ",
   "{names} tie at {n}": "{names}: egalitate la {n}",
   "A shared win.": "O victorie împărțită.",
@@ -3678,9 +3680,11 @@ function bidCheckTotals() {
 function bidCheckSummaryHTML() {
   const tot = bidCheckTotals();
   if (!tot.rounds) return '';
-  const text = tot.flagged
-    ? t("{flagged} of your {rounds} checked bids were over a point behind the engine's pick; about {pts} points in all.", { flagged: tot.flagged, rounds: tot.rounds, pts: fmtPts(tot.behind) })
-    : t("All {rounds} checked bids were within a point of the engine's pick.", { rounds: tot.rounds });
+  const bids = nOf(tot.rounds, 'checked bid', 'checked bids', 'licitație verificată', 'licitații verificate');
+  const text = tot.flagged > 1
+    ? t("{flagged} of your {bids} were over a point behind the engine's pick; about {pts} points in all.", { flagged: tot.flagged, bids, pts: fmtPts(tot.behind) })
+    : tot.flagged ? t("1 of your {bids} was over a point behind the engine's pick; about {pts} points in all.", { bids, pts: fmtPts(tot.behind) })
+    : t("All {bids} were within a point of the engine's pick.", { bids });
   return `<p class="sub bid-check${tot.flagged ? ' flag' : ''}"><span class="bc-verdict">${t('Bid check:')} ${text}</span></p>`;
 }
 
