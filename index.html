@@ -638,6 +638,11 @@ button:disabled { cursor: default; }
 .foot-links { display: flex; gap: 16px; align-items: center; }
 .sheet-head .out-note { color: var(--ink-red); font-weight: 600; }
 .sheet-head .won-note { color: var(--ink); font-weight: 600; }
+.sheet-head .bid-check { display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px 10px; }
+.sheet-head .bid-check.flag .bc-verdict { color: var(--ink-red); }
+.bc-chips { display: inline-flex; flex-wrap: wrap; gap: 2px 8px; font-size: 13px; color: var(--ink-soft); }
+.bc-chips .you { color: var(--ink); text-decoration: underline; text-underline-offset: 3px; }
+.bc-chips .best { color: var(--ink); font-weight: 700; }
 .foot-links .btn-ink { font-size: 17px; color: #fff; text-decoration: none; }
 .foot-links button { font-size: 14px; color: var(--ink-soft); text-decoration: underline; text-underline-offset: 3px; }
 
@@ -1812,6 +1817,7 @@ function initState(numPlayers) {
     knownVoids: {},        // {playerIndex: {suit: true}} — opponents shown void
     opponentStats: {},     // {playerIndex: {bids, made}} — cross-round tracking
     gameLog: null,         // full game recording
+    bidChecks: {},         // {roundIndex: {pick, behind, bid}} — your bids vs the engine
     trickHistory: []       // trick-by-trick log for round summary
   };
 }
@@ -1913,6 +1919,7 @@ function logGameEnd() {
   G.gameLog.winner = G.playerNames[winner];
   G.gameLog.winnerScore = G.scores[winner];
   G.gameLog.mode = 'solo';
+  G.gameLog.bidCheck = bidCheckTotals();
 
   // Save to localStorage
   try {
@@ -3945,6 +3952,7 @@ function autoBidChoice() {
 }
 function checkAutoBid() {
   if (autoBidTimer || G.phase !== 'bidding' || G.currentBidderIndex !== 0) return;
+  scheduleBidCheck();
   const bid = autoBidChoice();
   if (bid === null) return;
   autoBidTimer = setTimeout(() => {
@@ -4299,6 +4307,120 @@ function humansOut() {
   return humans.length > 0 && humans.every(h => !canStillWin(h));
 }
 
+// ─── Bid check ───
+// When it is your turn to bid, the engine values each legal bid for your hand
+// as an expected score: the named bots' PIMC, or the exact win chance with one
+// card. Nothing shows during the round; afterwards the sheet compares your bid
+// with the engine's pick.
+const BID_CHECK_SIMS = 400;
+let bidCheckTimer = null;
+function bidChecks() { return G.bidChecks || (G.bidChecks = {}); }
+function computeBidCheck() {
+  const { valid } = getValidBids(G.cardsPerPlayer, G.bids, isLastBidder());
+  if (valid.length < 2) return null;
+  const val = engineBidValues(ME, valid);
+  const pick = valid.reduce((a, b) => val[b] > val[a] ? b : a);
+  return { pick, val };
+}
+function ensureBidCheck() {
+  const r = G.currentRoundIndex, checks = bidChecks();
+  if (!(r in checks)) checks[r] = computeBidCheck();
+  return checks[r];
+}
+function scheduleBidCheck() {
+  if (bidCheckTimer || G.currentRoundIndex in bidChecks()) return;
+  bidCheckTimer = setTimeout(() => {   // after the bid panel has painted
+    bidCheckTimer = null;
+    if (G.phase === 'bidding' && G.currentBidderIndex === ME) ensureBidCheck();
+  }, 80);
+}
+function recordBidCheck(bid) {
+  const c = ensureBidCheck();
+  if (!c) return;
+  c.bid = bid;
+  if (G.gameLog && G.gameLog._currentRound) G.gameLog._currentRound.bidCheck = { pick: c.pick, val: c.val };
+}
+
+// The engine's trick count for each bid over sampled deals (the loop pimcBid
+// runs, keeping the whole distribution instead of one average).
+function bidCheckHist(me, sims) {
+  const hand = G.hands[me], cpp = G.cardsPerPlayer, n = G.numPlayers;
+  const hist = [];
+  for (let b = 0; b <= cpp; b++) hist.push(new Array(cpp + 1).fill(0));
+  for (let s = 0; s < sims; s++) {
+    const opp = sampleOpponentHands(hand, me);
+    const all = [];
+    for (let i = 0; i < n; i++) all.push(i === me ? hand.slice() : (opp[i] || []));
+    for (let b = 0; b <= cpp; b++) {
+      const bids = G.bids.slice();
+      bids[me] = b;
+      for (let i = 0; i < n; i++) if (bids[i] === null) bids[i] = Math.round(all[i].length / n);
+      const tw = simPlayOut(all.map(h => h.slice()), bids, new Array(n).fill(0), G.trumpSuit, (G.dealerIndex + 1) % n, n);
+      hist[b][tw[me]]++;
+    }
+  }
+  return hist;
+}
+// Playouts take about a fifth of a trick fewer than real play. Shifting that
+// share of each count up one trick, fitted per hand size so the picks match the
+// named bots' calibrated bids (88-100% agreement), keeps every value a real
+// expected score - unlike their linear lean, which makes wild overbids look cheap.
+const BID_CHECK_SHIFT = {
+  linear:    { 2: 0.25, 3: 0.3, 4: 0.2, 5: 0.2, 6: 0.25, 7: 0.15, 8: 0.15 },
+  geometric: { 2: 0.25, 3: 0.2, 4: 0.25, 5: 0.2, 6: 0.2, 7: 0, 8: 0 },
+};
+function expectedScore(hist, b, shift) {
+  const cpp = hist.length - 1;
+  let sum = 0, count = 0;
+  hist[b].forEach((c, t) => {
+    if (!c) return;
+    count += c;
+    sum += c * ((1 - shift) * scoreRound(t, b) + shift * scoreRound(Math.min(cpp, t + 1), b));
+  });
+  return count ? sum / count : 0;
+}
+function engineBidValues(me, valid) {
+  const cpp = G.cardsPerPlayer, val = {};
+  if (cpp === 1) {
+    const p = codexOneCardWinProb(me);   // made 1 scores 6, made 0 scores 5, a miss costs 1
+    if (valid.includes(0)) val[0] = Math.round((5 - 6 * p) * 10) / 10;
+    if (valid.includes(1)) val[1] = Math.round((7 * p - 1) * 10) / 10;
+  } else {
+    const shift = BID_CHECK_SHIFT[G.scoringMode === 'geometric' ? 'geometric' : 'linear'][cpp] || 0;
+    const hist = bidCheckHist(me, BID_CHECK_SIMS);
+    for (const b of valid) val[b] = Math.round(expectedScore(hist, b, shift) * 10) / 10;
+  }
+  return val;
+}
+function fmtPts(x) { return (Math.round(x * 10) / 10).toFixed(1).replace(/\.0$/, ''); }
+function signed(x) { const v = fmtPts(x); return x > 0 ? '+' + v : x < 0 ? '−' + v.slice(1) : v; }
+function bidCheckBehind(c) { return Math.round((c.val[c.pick] - c.val[c.bid]) * 10) / 10; }
+function bidCheckHTML(r) {
+  const c = bidChecks()[r];
+  if (!c || c.bid == null) return '';
+  const lost = bidCheckBehind(c);
+  const verdict = c.bid === c.pick ? `The engine bids ${c.pick} too.`
+    : lost > 1 ? `The engine bids ${c.pick}; your ${c.bid} gives up about ${fmtPts(lost)} points.`
+    : `The engine slightly prefers ${c.pick}; your ${c.bid} is within a point.`;
+  const lo = Math.min(c.pick, c.bid) - 1, hi = Math.max(c.pick, c.bid) + 1;
+  const chips = Object.keys(c.val).map(Number).filter(b => b >= lo && b <= hi).sort((a, b) => a - b).map(b =>
+    `<span class="${[b === c.bid ? 'you' : '', b === c.pick ? 'best' : ''].join(' ').trim()}">bid ${b}: ${signed(c.val[b])}</span>`).join('');
+  return `<p class="sub bid-check${lost > 1 ? ' flag' : ''}"><span class="bc-verdict">Bid check: ${verdict}</span><span class="bc-chips" title="Expected points for each bid, as the engine saw your hand when you bid">${chips}</span></p>`;
+}
+function bidCheckTotals() {
+  const done = Object.values(bidChecks()).filter(c => c && c.bid != null);
+  return { rounds: done.length, flagged: done.filter(c => bidCheckBehind(c) > 1).length,
+    behind: Math.round(done.reduce((a, c) => a + bidCheckBehind(c), 0) * 10) / 10 };
+}
+function bidCheckSummaryHTML() {
+  const t = bidCheckTotals();
+  if (!t.rounds) return '';
+  const text = t.flagged
+    ? `${t.flagged} of your ${t.rounds} checked bids were over a point behind the engine's pick; about ${fmtPts(t.behind)} points in all.`
+    : `All ${t.rounds} checked bids were within a point of the engine's pick.`;
+  return `<p class="sub bid-check${t.flagged ? ' flag' : ''}"><span class="bc-verdict">Bid check: ${text}</span></p>`;
+}
+
 function showRoundResult(roundScores) {
   const r = G.currentRoundIndex;
   const isLast = r + 1 >= G.roundSequence.length;
@@ -4307,7 +4429,7 @@ function showRoundResult(roundScores) {
   const champ = isLast || out ? -1 : humanClinched();
   const outNote = out ? `<p class="sub out-note">You can no longer finish first, even with perfect rounds from here.</p>` : '';
   const winNote = champ >= 0 ? `<p class="sub won-note">You have clinched first place. Nobody can catch up, even with perfect rounds from here.</p>` : '';
-  const head = `<h2>Round ${r + 1}<small>${G.cardsPerPlayer} card${G.cardsPerPlayer > 1 ? 's' : ''}, ${trumpStr}</small></h2><p class="sub">${roundSummary(roundScores)}</p>${outNote}${winNote}`;
+  const head = `<h2>Round ${r + 1}<small>${G.cardsPerPlayer} card${G.cardsPerPlayer > 1 ? 's' : ''}, ${trumpStr}</small></h2><p class="sub">${roundSummary(roundScores)}</p>${bidCheckHTML(r)}${outNote}${winNote}`;
   const body = sheetTableHTML({ highlight: (G.roundHistory || []).length - 1 });
   const foot = (trickLogHTML(G.trickHistory) || '<span></span>') + (isLast
     ? '<button class="btn-ink" onclick="showGameOver()">See final scores</button>'
@@ -4360,7 +4482,7 @@ function showGameOver() {
   logGameEnd();
   sfxGameOver();
   const { title } = finalTitle();
-  openSheet('gameover-overlay', `<h2>${title}</h2>${finalRankHTML()}`,
+  openSheet('gameover-overlay', `<h2>${title}</h2>${finalRankHTML()}${bidCheckSummaryHTML()}`,
     sheetTableHTML({ final: true }),
     '<span></span><button class="btn-ink" onclick="resetGame()">Play again</button>', false);
 }
@@ -4387,6 +4509,7 @@ function showHistory() {
 function humanBid(bid) {
   if (G.phase !== 'bidding' || G.currentBidderIndex !== 0) return;
   clearSuggestion();
+  recordBidCheck(bid);
   placeBid(0, bid);
 }
 
