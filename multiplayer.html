@@ -647,6 +647,15 @@ button:disabled { cursor: default; }
 .bc-chips { display: inline-flex; flex-wrap: wrap; gap: 2px 8px; font-size: 13px; color: var(--ink-soft); }
 .bc-chips .you { color: var(--ink); text-decoration: underline; text-underline-offset: 3px; }
 .bc-chips .best { color: var(--ink); font-weight: 700; }
+.sheet-head .play-check.flag .pc-verdict { color: var(--ink-red); }
+.pc-list { list-style: none; margin: 2px 0 0; padding: 0; font-size: 13px; line-height: 1.35; color: var(--graphite); }
+.pc-list li { padding-left: 12px; position: relative; }
+.pc-list li::before { content: '–'; position: absolute; left: 0; color: var(--ink-soft); }
+.tl-katya { font-size: 12px; font-weight: 700; color: var(--ink-red); white-space: nowrap; }
+.score-sheet tr.rv { cursor: pointer; }
+.rv-dot { display: inline-block; width: 6px; height: 6px; margin-left: 2px; border-radius: 50%; background: var(--ink-red); vertical-align: 2px; }
+.review { padding: 4px 16px 16px 18px; background: var(--paper); }
+.review .trick-log-body { max-height: none; }
 .foot-links .btn-ink { font-size: 17px; color: #fff; text-decoration: none; }
 .lang-switch { display: flex; width: fit-content; margin: -12px -6px 8px auto; border: 1.5px solid var(--ink-soft); border-radius: 999px; overflow: hidden; }
 .lang-switch button { font-size: 12px; font-weight: 700; letter-spacing: .04em; padding: 3px 10px; color: var(--ink); }
@@ -1136,6 +1145,16 @@ const RO = {
   "1 of your {bids} was over a point behind the engine's pick; about {pts} points in all.": "Una din cele {bids} a fost cu peste un punct sub alegerea motorului; cam {pts} puncte în total.",
   "All {bids} were within a point of the engine's pick.": "Toate cele {bids} au fost la mai puțin de un punct de alegerea motorului.",
   "{n} no trump": "{n} fără atu",
+  "Play check:": "Verificarea jocului:",
+  "Play check": "Verificarea jocului",
+  "after {cards}": "după {cards}",
+  "leading": "la deschidere",
+  "Trick {n}, {when}: you {card}, Katya {pick}, worth about {pts} more.": "Mâna {n}, {when}: tu {card}, Katya {pick}, cam {pts} în plus.",
+  "Katya would have played like you in all {choices}, or within half a point.": "Katya ar fi jucat ca tine în toate cele {choices}, sau la mai puțin de jumătate de punct.",
+  "Katya would play differently at {k} of your {choices}, worth about {pts} points.": "Katya ar fi jucat altfel la {k} din {choices}, cam {pts} puncte.",
+  "Katya would play differently at {k} of your {choices} this game, worth about {pts} points.": "Katya ar fi jucat altfel la {k} din {choices} în acest joc, cam {pts} puncte.",
+  "Katya would have played like you in all {choices} this game, or within half a point.": "Katya ar fi jucat ca tine în toate cele {choices} din acest joc, sau la mai puțin de jumătate de punct.",
+  "Over {choices} in {games}, Katya would have played differently at {share} of them, worth about {pergame} points a game.": "În {choices} din {games}, Katya ar fi jucat altfel la {share} dintre ele, cam {pergame} puncte pe joc.",
   " and ": " și ",
   "{names} tie at {n}": "{names}: egalitate la {n}",
   "A shared win.": "O victorie împărțită.",
@@ -2372,9 +2391,18 @@ function grokEndgameSearch(hands, bids, tw, trumpSuit, leader, numPlayers, trick
 
 function grokEndgameChooseCard(playerIndex, legalMoves) {
   if (legalMoves.length === 1) return legalMoves[0];
-  const hand = G.hands[playerIndex];
   const alreadyMade = G.tricksWon[playerIndex] >= (G.bids[playerIndex] || 0);
   const spite = alreadyMade ? findSpiteTarget(playerIndex) : undefined;
+  const scores = endgameCardScores(playerIndex, legalMoves, spite);
+  let bestCard = legalMoves[0], bestScore = -Infinity;
+  for (const c of legalMoves) {
+    if (scores[c.rank + c.suit] > bestScore) { bestScore = scores[c.rank + c.suit]; bestCard = c; }
+  }
+  return bestCard;
+}
+// Summed exact-search value of each legal card over sampled deals
+function endgameCardScores(playerIndex, legalMoves, spite) {
+  const hand = G.hands[playerIndex];
   const scores = {};
   for (const c of legalMoves) scores[c.rank + c.suit] = 0;
   for (let s = 0; s < GROK_CFG.endgameSamples; s++) {
@@ -2396,11 +2424,7 @@ function grokEndgameChooseCard(playerIndex, legalMoves) {
       scores[card.rank + card.suit] += res.score;
     }
   }
-  let bestCard = legalMoves[0], bestScore = -Infinity;
-  for (const c of legalMoves) {
-    if (scores[c.rank + c.suit] > bestScore) { bestScore = scores[c.rank + c.suit]; bestCard = c; }
-  }
-  return bestCard;
+  return scores;
 }
 
 function pimcChooseCard(playerIndex, legalMoves, numSims) {
@@ -2411,14 +2435,34 @@ function pimcChooseCard(playerIndex, legalMoves, numSims) {
     return grokEndgameChooseCard(playerIndex, legalMoves);
   }
 
-  const hand = G.hands[playerIndex];
-  const scores = {};
-  for (const c of legalMoves) scores[c.rank + c.suit] = 0;
-
   const alreadyMade = G.tricksWon[playerIndex] >= (G.bids[playerIndex] || 0);
   const spite = alreadyMade ? findSpiteTarget(playerIndex) : undefined;
   const isCodex = getStyle(playerIndex) === 'codex';
   const isSpite = getStyle(playerIndex) === 'spite';
+  const scores = pimcCardScores(playerIndex, legalMoves, numSims, result => {
+    let sc = isCodex ? codexSimScore(playerIndex,result,G.bids) : isSpite ? spiteSimScore(playerIndex,result,G.bids) : simScore(playerIndex,result,G.bids);
+    if(!isSpite&&spite!==undefined&&result[spite]!==G.bids[spite])sc+=isCodex?CODEX_CFG.spiteBonus:2.0;
+    return sc;
+  }, spite);
+
+  let bestCard = legalMoves[0], bestScore = -Infinity;
+  for (const c of legalMoves) {
+    if (scores[c.rank + c.suit] > bestScore) {
+      bestScore = scores[c.rank + c.suit];
+      bestCard = c;
+    }
+  }
+  return bestCard;
+}
+
+// Summed simulated value of each legal card for playerIndex: sampled deals,
+// the strong bots' in-trick replies, then playouts of the rest of the round,
+// each scored by scoreOf(tricks taken by everyone). spite steers the playouts.
+function pimcCardScores(playerIndex, legalMoves, numSims, scoreOf, spite) {
+  const hand = G.hands[playerIndex];
+  const scores = {};
+  for (const c of legalMoves) scores[c.rank + c.suit] = 0;
+  const isCodex = getStyle(playerIndex) === 'codex';
   const smartTrick = isCodex || !!getPlayer(playerIndex).v2;
 
   for (let sim = 0; sim < numSims; sim++) {
@@ -2452,9 +2496,7 @@ function pimcChooseCard(playerIndex, legalMoves, numSims) {
         tw[best.playerIndex]++;
         leader = best.playerIndex;
         const result = simPlayOut(allHands, G.bids, tw, G.trumpSuit, leader, G.numPlayers, spite);
-        let sc = isCodex ? codexSimScore(playerIndex,result,G.bids) : isSpite ? spiteSimScore(playerIndex,result,G.bids) : simScore(playerIndex,result,G.bids);
-        if(!isSpite&&spite!==undefined&&result[spite]!==G.bids[spite])sc+=isCodex?CODEX_CFG.spiteBonus:2.0;
-        scores[card.rank + card.suit] += sampled.weight*sc;
+        scores[card.rank + card.suit] += sampled.weight*scoreOf(result);
       } else {
         const nextP = (playerIndex + 1) % G.numPlayers;
 
@@ -2503,21 +2545,11 @@ function pimcChooseCard(playerIndex, legalMoves, numSims) {
         leader = best.playerIndex;
 
         const result = simPlayOut(allHands, G.bids, tw, G.trumpSuit, leader, G.numPlayers, spite);
-        let sc=isCodex?codexSimScore(playerIndex,result,G.bids):isSpite?spiteSimScore(playerIndex,result,G.bids):simScore(playerIndex,result,G.bids);
-        if(!isSpite&&spite!==undefined&&result[spite]!==G.bids[spite])sc+=isCodex?CODEX_CFG.spiteBonus:2.0;
-        scores[card.rank + card.suit]+=sampled.weight*sc;
+        scores[card.rank + card.suit]+=sampled.weight*scoreOf(result);
       }
     }
   }
-
-  let bestCard = legalMoves[0], bestScore = -Infinity;
-  for (const c of legalMoves) {
-    if (scores[c.rank + c.suit] > bestScore) {
-      bestScore = scores[c.rank + c.suit];
-      bestCard = c;
-    }
-  }
-  return bestCard;
+  return scores;
 }
 
 function pimcBid(playerIndex, numSims, kappa = 0) {
@@ -3470,7 +3502,8 @@ function sheetTableHTML({ highlight = -1, final = false } = {}) {
   G.roundSequence.forEach((cpp, r) => {
     const row = hist[r];
     const cls = [r === highlight ? 'now' : '', !row ? 'todo' : '', final && r === lastIdx ? 'final' : ''].join(' ').trim();
-    h += `<tr class="${cls}"><td class="rc">${cpp}${row && row.trumpSuit ? `<span class="ts ${SUIT_COLOR[row.trumpSuit]}">${SUIT_SYMBOL[row.trumpSuit]}</span>` : ''}</td>`;
+    const review = row && row.trickHistory ? ` onclick="showRoundReview(${r})"` : '';
+    h += `<tr class="${cls}${review ? ' rv' : ''}"${review}><td class="rc">${cpp}${row && row.trumpSuit ? `<span class="ts ${SUIT_COLOR[row.trumpSuit]}">${SUIT_SYMBOL[row.trumpSuit]}</span>` : ''}${row && roundFlagged(r) ? '<i class="rv-dot" aria-hidden="true"></i>' : ''}</td>`;
     for (let p = 0; p < n; p++) {
       const meCol = p === M() ? ' me-col' : '';
       if (!row) { h += `<td class="${meCol.trim()}"></td>`; continue; }
@@ -3487,24 +3520,28 @@ function sheetTableHTML({ highlight = -1, final = false } = {}) {
   return h + '</tbody></table>';
 }
 
-function trickLogHTML(tricks) {
+function trickLogHTML(tricks, checks, open = false) {
   if (!tricks || !tricks.length) return '';
-  let html = `<details class="trick-log"><summary>${t('How the tricks went')}</summary><div class="trick-log-body">`;
+  const katya = {};
+  for (const x of playCheckFlagged(checks)) katya[x.trick] = x;
+  let html = `<details class="trick-log"${open ? ' open' : ''}><summary>${t('How the tricks went')}</summary><div class="trick-log-body">`;
   tricks.forEach((tr, i) => {
     html += `<div class="trick-log-row"><span class="trick-log-num">${i + 1}.</span>`;
     tr.entries.forEach((e, j) => {
       const isW = e.playerIndex === tr.winnerIndex;
       html += `<span class="trick-log-card ${SUIT_COLOR[e.card.suit]}${isW ? ' tl-winner' : ''}" title="${playerLabel(e.playerIndex)}${j === 0 ? t(', led') : ''}">${e.card.rank}${SUIT_SYMBOL[e.card.suit]}</span>`;
     });
+    if (katya[i]) html += `<span class="tl-katya" title="${escHTML(playCheckLineHTML(katya[i]).replace(/<[^>]+>/g, ''))}">Katya ${cardTxt(katya[i].pick)}</span>`;
     html += `<span class="trick-log-reason">${playerLabel(tr.winnerIndex)}, ${tr.reason}</span></div>`;
   });
   return html + '</div></details>';
 }
 
-function openSheet(id, head, body, foot, closeOnBackdrop) {
-  removeOverlays();
+function openSheet(id, head, body, foot, closeOnBackdrop, stack = false) {
+  if (stack) document.getElementById(id)?.remove();
+  else removeOverlays();
   document.body.insertAdjacentHTML('beforeend',
-    `<div class="overlay" id="${id}"${closeOnBackdrop ? ' onclick="if(event.target===this)removeOverlays()"' : ''}>`
+    `<div class="overlay" id="${id}"${closeOnBackdrop ? ` onclick="if(event.target===this)${stack ? 'this.remove()' : 'removeOverlays()'}"` : ''}>`
     + `<div class="overlay-content sheet" role="dialog" aria-modal="true">`
     + `<div class="sheet-head">${head}</div><div class="sheet-scroll">${body}</div><div class="sheet-foot">${foot}</div>`
     + '</div></div>');
@@ -3520,13 +3557,13 @@ function openSheet(id, head, body, foot, closeOnBackdrop) {
   return ov;
 }
 
-function roundSummary(roundScores) {
-  const bid = G.bids[M()], won = G.tricksWon[M()], d = roundScores[M()];
+function roundSummary(roundScores, bids = G.bids, tricksWon = G.tricksWon) {
+  const bid = bids[M()], won = tricksWon[M()], d = roundScores[M()];
   const mine = won === bid
     ? (bid === 0 ? t('You took none, as bid: {pts}.', { pts: `<b>+${d}</b>` }) : t('You made {bid}: {pts}.', { bid, pts: `<b>+${d}</b>` }))
     : t('You took {won} on a bid of {bid}: {pts}.', { won, bid, pts: `<b class="neg">${d}</b>` });
   const missed = [];
-  for (let p = 0; p < G.numPlayers; p++) if (p !== M() && G.tricksWon[p] !== G.bids[p]) missed.push(playerLabel(p));
+  for (let p = 0; p < G.numPlayers; p++) if (p !== M() && tricksWon[p] !== bids[p]) missed.push(playerLabel(p));
   const others = !missed.length ? t('Everyone else made theirs.')
     : t('Missed: {list}.', { list: missed.join(', ') });
   return `${mine} ${others}`;
@@ -3691,6 +3728,118 @@ function bidCheckSummaryHTML() {
   return `<p class="sub bid-check${tot.flagged ? ' flag' : ''}"><span class="bc-verdict">${t('Bid check:')} ${text}</span></p>`;
 }
 
+// ─── Play check ───
+// Each card you choose from more than one legal card (interchangeable cards
+// aside) is scored a moment later, from the position you chose it in: Katya's
+// model of the rest of the round - her sampled deals, in-trick replies and
+// playouts, exact search for the last two tricks - values every card you
+// could have played, in your own round points (without her spite and
+// opponent-denial terms). The round sheet lists the plays where her pick was
+// worth clearly more; tap a finished round on the score sheet to review it.
+// Kept on this device per game, like the bid checks.
+const PLAY_CHECK_SIMS = 400, PLAY_CHECK_FLAG = 0.5;
+const myPlayChecks = {};
+function playChecks() {
+  const key = (G.gameLog && G.gameLog.timestamp) || 'game';
+  return myPlayChecks[key] || (myPlayChecks[key] = {});
+}
+function cardKey(c) { return c.rank + c.suit; }
+function cardTxt(c) { return c.rank + suitTxt(c.suit); }
+function playCheckValues(me, legal) {
+  const sum = {};
+  let n = 0;
+  if (G.hands[me].length <= GROK_CFG.endgameMaxCards) {
+    while (n < PLAY_CHECK_SIMS) {
+      const s = endgameCardScores(me, legal, undefined);
+      for (const k in s) sum[k] = (sum[k] || 0) + s[k];
+      n += GROK_CFG.endgameSamples;
+    }
+  } else {
+    Object.assign(sum, pimcCardScores(me, legal, PLAY_CHECK_SIMS, result => scoreRound(result[me], G.bids[me]), undefined));
+    n = PLAY_CHECK_SIMS;
+  }
+  const val = {};
+  for (const c of legal) val[cardKey(c)] = Math.round(sum[cardKey(c)] / n * 10) / 10;
+  return val;
+}
+// Keep the position as you saw it; score it after the card is on the table.
+// Sampling only reads how many cards each opponent holds, so their hands are
+// placeholders of that size (a guest knows no other hand anyway).
+function recordPlayCheck(card) {
+  try { queuePlayCheck(card); } catch (e) { console.warn('Play check failed', e); }   // analysis must never stand between a player and their card
+}
+function queuePlayCheck(card) {
+  const me = M();
+  const led = G.currentTrick.length ? G.currentTrick[0].card.suit : null;
+  const legal = getLegalMoves(G.hands[me], led, G.trumpSuit);
+  if (legal.length < 2 || interchangeable(legal)) return;
+  const counts = MP.active && !MP.isHost ? (MP.handCounts || []) : G.hands.map(h => (h || []).length);
+  const pos = JSON.parse(JSON.stringify(Object.assign({}, G, { gameLog: null, hands: [] })));
+  pos.hands = Array.from({ length: G.numPlayers }, (_, i) => i === me ? JSON.parse(JSON.stringify(G.hands[me])) : new Array(counts[i] || 0).fill(null));
+  const game = G.gameLog && G.gameLog.timestamp, round = G.currentRoundIndex;
+  const entry = { trick: (G.trickHistory || []).length, card: { rank: card.rank, suit: card.suit },
+    before: G.currentTrick.map(e => ({ p: e.playerIndex, card: { rank: e.card.rank, suit: e.card.suit } })) };
+  setTimeout(() => {
+    const live = G;
+    G = pos;
+    try { entry.val = playCheckValues(me, legal); } catch (e) { console.warn('Play check failed', e); return; } finally { G = live; }
+    if ((G.gameLog && G.gameLog.timestamp) !== game) return;
+    const best = legal.reduce((a, b) => entry.val[cardKey(b)] > entry.val[cardKey(a)] ? b : a);
+    entry.pick = { rank: best.rank, suit: best.suit };
+    (playChecks()[round] || (playChecks()[round] = [])).push(entry);
+  }, 50);
+}
+function playCheckLost(x) { return Math.round((x.val[cardKey(x.pick)] - x.val[cardKey(x.card)]) * 10) / 10; }
+function playCheckFlagged(list) {
+  return (list || []).filter(x => playCheckLost(x) >= PLAY_CHECK_FLAG).sort((a, b) => playCheckLost(b) - playCheckLost(a));
+}
+function playCheckLineHTML(x) {
+  const when = x.before.length
+    ? t('after {cards}', { cards: x.before.map(b => `${playerLabel(b.p)} ${cardTxt(b.card)}`).join(', ') })
+    : t('leading');
+  return t('Trick {n}, {when}: you {card}, Katya {pick}, worth about {pts} more.',
+    { n: x.trick + 1, when, card: cardTxt(x.card), pick: cardTxt(x.pick), pts: fmtPts(playCheckLost(x)) });
+}
+function playCheckHTML(r) {
+  const list = playChecks()[r];
+  if (!list || !list.length) return '';
+  const flagged = playCheckFlagged(list);
+  const choices = nOf(list.length, 'card choice', 'card choices', 'alegere', 'alegeri');
+  if (!flagged.length) return `<p class="sub play-check"><span class="pc-verdict">${t('Play check:')} ${t('Katya would have played like you in all {choices}, or within half a point.', { choices })}</span></p>`;
+  const pts = fmtPts(flagged.reduce((a, x) => a + playCheckLost(x), 0));
+  return `<div class="sub play-check flag"><span class="pc-verdict">${t('Play check:')} ${t('Katya would play differently at {k} of your {choices}, worth about {pts} points.', { k: flagged.length, choices, pts })}</span>`
+    + `<ul class="pc-list">${flagged.slice(0, 3).map(x => `<li>${playCheckLineHTML(x)}</li>`).join('')}</ul></div>`;
+}
+function playCheckTotals() {
+  const all = Object.values(playChecks()).flat().filter(x => x && x.val);
+  const flagged = playCheckFlagged(all);
+  return { choices: all.length, flagged: flagged.length, lost: Math.round(flagged.reduce((a, x) => a + playCheckLost(x), 0) * 10) / 10 };
+}
+function playCheckSummaryHTML() {
+  const tot = playCheckTotals();
+  if (!tot.choices) return '';
+  const choices = nOf(tot.choices, 'card choice', 'card choices', 'alegere', 'alegeri');
+  const text = tot.flagged
+    ? t('Katya would play differently at {k} of your {choices} this game, worth about {pts} points.', { k: tot.flagged, choices, pts: fmtPts(tot.lost) })
+    : t('Katya would have played like you in all {choices} this game, or within half a point.', { choices });
+  return `<p class="sub play-check${tot.flagged ? ' flag' : ''}"><span class="pc-verdict">${t('Play check:')} ${text}</span></p>`;
+}
+function roundFlagged(r) {
+  const c = bidChecks()[r];
+  return (c && c.bid != null && bidCheckBehind(c) > 1) || playCheckFlagged(playChecks()[r]).length > 0;
+}
+// Any finished round, again: your result, the checks, every trick
+function showRoundReview(r) {
+  const h = (G.roundHistory || [])[r];
+  if (!h) return;
+  const trumpStr = h.trumpSuit ? t('{s} trump', { s: SUIT_SYMBOL[h.trumpSuit] }) : t('no trump');
+  const head = `<h2>${t('Round {n}', { n: r + 1 })}<small>${nOf(h.cardsPerPlayer, 'card', 'cards', 'carte', 'cărți')}, ${trumpStr}</small></h2>`
+    + `<p class="sub">${roundSummary(h.roundScores, h.bids, h.tricksWon)}</p>${bidCheckHTML(r)}${playCheckHTML(r)}`;
+  openSheet('review-overlay', head, `<div class="review">${trickLogHTML(fbToIndexedArray(h.trickHistory).map(tr => tr && Object.assign({}, tr, { entries: fbToIndexedArray(tr.entries) })), playChecks()[r], true)}</div>`,
+    `<span></span><button class="btn-ink" onclick="closeReview()">${t('Back')}</button>`, true, true);
+}
+function closeReview() { document.getElementById('review-overlay')?.remove(); }
+
 function showRoundResult(roundScores) {
   const r = G.currentRoundIndex;
   const isLast = r + 1 >= G.roundSequence.length;
@@ -3700,10 +3849,10 @@ function showRoundResult(roundScores) {
   const humanSeats = G.playerNames.map((_, i) => i).filter(i => !isAIPlayer(i));
   const outNote = out ? `<p class="sub out-note">${humanSeats.length === 1 && humanSeats[0] === M() ? t('You can no longer finish first, even with perfect rounds from here.') : t('No human player can finish first any more, even with perfect rounds from here.')}</p>` : '';
   const winNote = champ >= 0 ? `<p class="sub won-note">${champ === M() ? t('You have clinched first place. Nobody can catch up, even with perfect rounds from here.') : t('{name} has clinched first place. Nobody can catch up, even with perfect rounds from here.', { name: escHTML(G.playerNames[champ]) })}</p>` : '';
-  const head = `<h2>${t('Round {n}', { n: r + 1 })}<small>${nOf(G.cardsPerPlayer, 'card', 'cards', 'carte', 'cărți')}, ${trumpStr}</small></h2><p class="sub">${roundSummary(roundScores)}</p>${bidCheckHTML(r)}${outNote}${winNote}`;
+  const head = `<h2>${t('Round {n}', { n: r + 1 })}<small>${nOf(G.cardsPerPlayer, 'card', 'cards', 'carte', 'cărți')}, ${trumpStr}</small></h2><p class="sub">${roundSummary(roundScores)}</p>${bidCheckHTML(r)}${playCheckHTML(r)}${outNote}${winNote}`;
   const body = sheetTableHTML({ highlight: (G.roundHistory || []).length - 1 });
   const canAdvance = !MP.active || MP.isHost;
-  const foot = (trickLogHTML(G.trickHistory) || '<span></span>') + (!canAdvance
+  const foot = (trickLogHTML(G.trickHistory, playChecks()[r]) || '<span></span>') + (!canAdvance
     ? `<span class="wait">${t(isLast ? 'Waiting for the host to show final scores…' : 'Waiting for the host to deal…')}</span>`
     : isLast
     ? `<button class="btn-ink" onclick="showGameOver()">${t('See final scores')}</button>`
@@ -3780,6 +3929,8 @@ function statsRecordFromGame(me, online, ai) {
   const checks = bidChecks(), c = [];
   for (const k in checks) { const x = checks[k]; if (x && x.bid != null) c.push([+k, x.pick, bidCheckBehind(x)]); }
   if (c.length) rec.c = c;
+  const pc = playCheckTotals();
+  if (pc.choices) rec.pc = [pc.choices, pc.flagged, pc.lost];
   return rec;
 }
 
@@ -3792,7 +3943,7 @@ function showGameOver() {
   if (MP.active && MP.isHost) localStorage.removeItem('mpHostSession');
   if (MP.active && MP.isHost) mpPushGameState();
   const { title } = finalTitle();
-  openSheet('gameover-overlay', `<h2>${title}</h2>${finalRankHTML()}${bidCheckSummaryHTML()}<div id="rematch-box"></div>`,
+  openSheet('gameover-overlay', `<h2>${title}</h2>${finalRankHTML()}${bidCheckSummaryHTML()}${playCheckSummaryHTML()}<div id="rematch-box"></div>`,
     sheetTableHTML({ final: true }), gameOverFootHTML(), false);
   renderRematch();
 }
@@ -3944,6 +4095,7 @@ function humanPlayCard(rank,suit) {
   const ledSuit=G.currentTrick.length>0?G.currentTrick[0].card.suit:null;
   if(!getLegalMoves(hand,ledSuit,G.trumpSuit).some(c=>c.rank===rank&&c.suit===suit)) return;
   clearAutoPlay(); clearSuggestion();
+  recordPlayCheck(card);
   if(MP.active&&!MP.isHost) mpSendAction({type:'play',rank,suit});
   else playCard(MP.mySeat,card);
 }
