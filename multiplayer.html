@@ -983,7 +983,8 @@ const MP = {
   active: false, isHost: false, mySeat: 0,
   sessionId: null, selectedCount: 0,
   players: {}, handCounts: [],
-  db: null, auth: null, uid: null
+  db: null, auth: null, uid: null,
+  gameNo: 0   // rematches dealt at this table
 };
 
 // ─── Sound Engine (card-like: swoosh + snap + table / collect scrape) ───
@@ -3463,11 +3464,105 @@ function showGameOver() {
   if (MP.active && MP.isHost) localStorage.removeItem('mpHostSession');
   if (MP.active && MP.isHost) mpPushGameState();
   const { title } = finalTitle();
-  const stats = '<span class="foot-links"><a href="index.html?stats=1" target="_blank" rel="noopener">Your stats</a></span>';
-  const foot = (!MP.active || MP.isHost)
-    ? stats + '<button class="btn-ink" onclick="resetGame()">Play again</button>'
-    : stats + '<span class="wait">Game over. Thanks for playing.</span>';
-  openSheet('gameover-overlay', `<h2>${title}</h2>${finalRankHTML()}${bidCheckSummaryHTML()}`, sheetTableHTML({ final: true }), foot, false);
+  openSheet('gameover-overlay', `<h2>${title}</h2>${finalRankHTML()}${bidCheckSummaryHTML()}<div id="rematch-box"></div>`,
+    sheetTableHTML({ final: true }), gameOverFootHTML(), false);
+  renderRematch();
+}
+
+// ─── Rematch ───
+// The host offers a rematch from the game-over sheet: same table, seats and
+// scoring. Every guest page still open confirms by itself; the host deals as
+// soon as everyone is back, or at once with a bot in the seat of anyone who
+// is not. A replaced player's seat entry is cleared, so a late return can't
+// play over the bot.
+let rematchOffer = 0;        // the game number on offer (host and guests)
+let rematchListener = null;  // host: watches the guests' confirmations
+const statsLink = '<a href="index.html?stats=1" target="_blank" rel="noopener">Your stats</a>';
+function gameOverFootHTML() {
+  if (!MP.active) return `<span class="foot-links">${statsLink}</span><button class="btn-ink" onclick="resetGame()">Play again</button>`;
+  if (MP.isHost) return rematchOffer
+    ? `<span class="foot-links">${statsLink}</span><button class="btn-ink" onclick="hostDealRematch()">Deal now</button>`
+    : `<span class="foot-links">${statsLink}<button onclick="resetGame()">New table</button></span><button class="btn-ink" onclick="hostOfferRematch()">Rematch</button>`;
+  return rematchOffer
+    ? `<span class="foot-links">${statsLink}<button onclick="guestLeaveTable()">Leave the table</button></span><span class="wait">Rematch coming…</span>`
+    : `<span class="foot-links">${statsLink}</span><span class="wait">Game over. Thanks for playing.</span>`;
+}
+// Guests who have not confirmed the offer yet ('out' means they left)
+function rematchPending() {
+  return Object.entries(MP.players).filter(([uid, p]) => uid !== MP.uid && p.rematch !== rematchOffer && p.rematch !== 'out');
+}
+function renderRematch() {
+  const box = document.getElementById('rematch-box');
+  const ov = document.getElementById('gameover-overlay');
+  if (!box || !ov || !MP.active) return;
+  if (MP.isHost && rematchOffer) {
+    const waiting = rematchPending();
+    if (!waiting.length) { hostDealRematch(); return; }
+    const names = waiting.map(([, p]) => escapeHtml(p.name));
+    box.innerHTML = `<p class="sub won-note">Rematch: waiting for ${names.join(' and ')}. Deal now and a bot takes the seat of anyone not back.</p>`;
+  } else if (!MP.isHost && rematchOffer) {
+    box.innerHTML = `<p class="sub won-note">${escapeHtml(G.playerNames[0] || 'The host')} started a rematch: same seats and scoring. Dealing as soon as everyone is back.</p>`;
+  } else box.innerHTML = '';
+  ov.querySelector('.sheet-foot').innerHTML = gameOverFootHTML();
+}
+function hostOfferRematch() {
+  if (!MP.active || !MP.isHost || rematchOffer) return;
+  rematchOffer = MP.gameNo + 1;
+  MP.db.ref(`sessions/${MP.sessionId}/rematch`).set({ n: rematchOffer, at: Date.now() });
+  rematchListener = snap => { MP.players = snap.val() || {}; renderRematch(); };
+  MP.db.ref(`sessions/${MP.sessionId}/players`).on('value', rematchListener);
+}
+function hostDealRematch() {
+  if (!MP.active || !MP.isHost || !rematchOffer) return;
+  // Stop watching first: Firebase runs local listeners synchronously, and the
+  // removals below would otherwise deal again from inside this call.
+  const offer = rematchOffer;
+  rematchOffer = 0;
+  if (rematchListener) MP.db.ref(`sessions/${MP.sessionId}/players`).off('value', rematchListener);
+  rematchListener = null;
+  const n = G.numPlayers, names = G.playerNames.slice();
+  const spare = pickOpponents(ALL_OPPONENTS.length).filter(nm => !names.includes(nm));
+  for (const [uid, p] of Object.entries(MP.players)) {
+    if (uid === MP.uid || p.rematch === offer) continue;
+    names[p.seat] = spare.shift() || `Bot${p.seat}`;   // not back: a bot takes the seat
+    delete MP.players[uid];
+    MP.db.ref(`sessions/${MP.sessionId}/players/${uid}`).remove();
+  }
+  MP.gameNo = offer;
+  MP.db.ref(`sessions/${MP.sessionId}/rematch`).remove();
+  MP.humanSeats = new Set(Object.values(MP.players).map(p => p.seat));
+  window._scoringMode = G.scoringMode;
+  removeOverlays();
+  initState(n);
+  G.playerNames = names;
+  MP.handCounts = new Array(n).fill(0);
+  MP.db.ref(`sessions/${MP.sessionId}/playerNames`).set(names);
+  localStorage.setItem('mpHostSession', JSON.stringify({ sessionId: MP.sessionId, name: names[0] || '' }));
+  startRound();
+}
+// Guests: confirm an offer as soon as it arrives; keep the seat list current,
+// and step aside if a bot took this seat while the page was away.
+function mpListenRematch() {
+  if (MP.isHost) return;
+  MP.db.ref(`sessions/${MP.sessionId}/rematch`).on('value', snap => {
+    const r = snap.val();
+    rematchOffer = r && r.n ? r.n : 0;
+    if (rematchOffer) MP.db.ref(`sessions/${MP.sessionId}/players/${MP.uid}/rematch`).set(rematchOffer);
+    renderRematch();
+  });
+  MP.db.ref(`sessions/${MP.sessionId}/players`).on('value', snap => {
+    MP.players = snap.val() || {};
+    if (MP.players[MP.uid] || !MP.active) return;
+    MP.db.ref(`sessions/${MP.sessionId}`).off();
+    MP.active = false;
+    removeOverlays();
+    document.getElementById('chat-widget').classList.remove('open');
+    document.getElementById('game-screen').innerHTML = '<div class="ended-wrap"><div class="sheet setup-sheet"><h1>Rematch dealt</h1><p class="lede">You were away when the rematch was dealt, so a bot took your seat.</p><button class="btn-ink" onclick="location.href=location.pathname">Back to the menu</button></div></div>';
+  });
+}
+function guestLeaveTable() {
+  if (MP.active && !MP.isHost && MP.db) MP.db.ref(`sessions/${MP.sessionId}/players/${MP.uid}/rematch`).set('out');
+  resetGame();
 }
 
 function hostEndGame() {
@@ -3775,6 +3870,7 @@ function mpCompleteJoin() {
                 mpListenMyHand();
                 mpListenHandCounts();
                 mpListenChat();
+                mpListenRematch();
               });
             });
           }
@@ -3890,6 +3986,8 @@ function mpListenActions() {
   MP.db.ref(`sessions/${MP.sessionId}/actions`).on('child_added',snap=>{
     const action=snap.val();if(!action)return;
     snap.ref.remove();
+    const from=MP.players[action.uid];
+    if(!from||from.seat!==action.seat)return;   // only the player seated there (a bot may have taken it)
     if(action.type==='bid'&&G.phase==='bidding'&&G.currentBidderIndex===action.seat){
       placeBid(action.seat,action.bid);
     } else if(action.type==='play'&&G.phase==='playing'&&currentPlayerToAct()===action.seat){
@@ -4020,7 +4118,7 @@ window.addEventListener('DOMContentLoaded',()=>{
             G.hands=Array.from({length:session.numPlayers},()=>[]);
             G.scores=new Array(session.numPlayers).fill(0);
             document.getElementById('game-screen').classList.add('active');
-            mpListenGameState();mpListenMyHand();mpListenHandCounts();mpListenChat();
+            mpListenGameState();mpListenMyHand();mpListenHandCounts();mpListenChat();mpListenRematch();
           } else {
             // Still in lobby — show join screen with name pre-filled and auto-join
             mpShowJoin(code,session);
