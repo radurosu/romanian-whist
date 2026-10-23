@@ -636,6 +636,8 @@ button:disabled { cursor: default; }
 }
 .sheet-foot .wait { font-size: 15px; color: var(--graphite); }
 .foot-links { display: flex; gap: 16px; align-items: center; }
+.sheet-head .out-note { color: var(--ink-red); font-weight: 600; }
+.foot-links .btn-ink { font-size: 17px; color: #fff; text-decoration: none; }
 .foot-links button { font-size: 14px; color: var(--ink-soft); text-decoration: underline; text-underline-offset: 3px; }
 
 table.score-sheet {
@@ -4265,14 +4267,36 @@ function roundSummary(roundScores) {
   return `${mine} ${others}`;
 }
 
+// ─── Mathematically out ───
+// A player is out when even their best possible finish (making the largest
+// bid every remaining round) can't reach some opponent's worst possible finish
+// (missing by the most every round). Ties for first still count as a chance.
+function roundPointsRange(cpp) {
+  const tri = n => n * (n + 1) / 2;
+  return G.scoringMode === 'geometric' ? { max: 5 + tri(cpp), min: -tri(cpp) } : { max: 5 + cpp, min: -cpp };
+}
+function canStillWin(p) {
+  let up = 0, down = 0;
+  for (const cpp of G.roundSequence.slice(G.currentRoundIndex + 1)) { const r = roundPointsRange(cpp); up += r.max; down += r.min; }
+  return G.scores.every((s, i) => i === p || s + down <= G.scores[p] + up);
+}
+function humansOut() {
+  const humans = [ME];
+  return humans.length > 0 && humans.every(h => !canStillWin(h));
+}
+
 function showRoundResult(roundScores) {
   const r = G.currentRoundIndex;
   const isLast = r + 1 >= G.roundSequence.length;
   const trumpStr = G.trumpSuit ? `${SUIT_SYMBOL[G.trumpSuit]} trump` : 'no trump';
-  const head = `<h2>Round ${r + 1}<small>${G.cardsPerPlayer} card${G.cardsPerPlayer > 1 ? 's' : ''}, ${trumpStr}</small></h2><p class="sub">${roundSummary(roundScores)}</p>`;
+  const out = !isLast && humansOut();
+  const outNote = out ? `<p class="sub out-note">You can no longer finish first, even with perfect rounds from here.</p>` : '';
+  const head = `<h2>Round ${r + 1}<small>${G.cardsPerPlayer} card${G.cardsPerPlayer > 1 ? 's' : ''}, ${trumpStr}</small></h2><p class="sub">${roundSummary(roundScores)}</p>${outNote}`;
   const body = sheetTableHTML({ highlight: (G.roundHistory || []).length - 1 });
   const foot = (trickLogHTML(G.trickHistory) || '<span></span>') + (isLast
     ? '<button class="btn-ink" onclick="showGameOver()">See final scores</button>'
+    : out
+    ? '<span class="foot-links"><button onclick="nextRound()">Play on</button><button class="btn-ink" onclick="showGameOver()">End game</button></span>'
     : '<button class="btn-ink" onclick="nextRound()">Next round</button>');
   openSheet('round-overlay', head, body, foot, false);
 }
