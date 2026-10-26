@@ -482,6 +482,8 @@ button:disabled { cursor: default; }
 }
 
 /* Action bar */
+.bid-btn.nope { animation: bid-nope .35s ease; }
+@keyframes bid-nope { 25% { transform: translateX(-4px); } 50% { transform: translateX(4px); } 75% { transform: translateX(-2px); } }
 body.my-turn #action-bar { animation: my-turn-glow 1.6s ease-in-out infinite; }
 @keyframes my-turn-glow { 0%, 100% { box-shadow: inset 0 3px 0 var(--brass), 0 -6px 18px rgba(242, 193, 78, .35); } 50% { box-shadow: inset 0 3px 0 transparent, 0 -6px 18px transparent; } }
 @media (prefers-reduced-motion: reduce) { body.my-turn #action-bar { animation: none; box-shadow: inset 0 3px 0 var(--brass); } }
@@ -4434,6 +4436,24 @@ function cardHTML(card, extra = '', tag = 'div', attrs = '') {
     + `</${tag}>`;
 }
 
+// ─── Bid from the keyboard ───
+// On your bidding turn a digit key (top row or keypad) places that bid; a bid
+// that isn't allowed buzzes and shakes its button instead. Ignored while
+// typing (chat) or while a sheet is open.
+document.addEventListener('keydown', e => {
+  const m = /^(?:Digit|Numpad)([0-9])$/.exec(e.code) || /^([0-9])$/.exec(e.key);   // keypad works with NumLock off too
+  if (e.ctrlKey || e.metaKey || e.altKey || !m) return;
+  if (e.target.closest && e.target.closest('input, textarea, select, [contenteditable]')) return;
+  if (!G || G.phase !== 'bidding' || G.currentBidderIndex !== ME || document.querySelector('.overlay')) return;
+  const bid = +m[1];
+  if (bid > G.cardsPerPlayer) return;
+  e.preventDefault();
+  if (getValidBids(G.cardsPerPlayer, G.bids, isLastBidder()).valid.includes(bid)) { humanBid(bid); return; }
+  sfxForbidden();
+  const btn = document.querySelectorAll('#action-bar .bid-btn')[bid];
+  if (btn) { btn.classList.remove('nope'); void btn.offsetWidth; btn.classList.add('nope'); }
+});
+
 // ─── Your turn ───
 // Players miss their turn when they look away, so the moment it becomes
 // yours: a short chime, a buzz on phones, a pulsing action bar and the tab
@@ -4598,7 +4618,7 @@ function renderActionBar() {
     let btns = '';
     for (let i = 0; i <= cpp; i++) {
       const ok = valid.includes(i);
-      btns += `<button class="bid-btn${i === forbidden ? ' forbidden' : ''}" ${ok ? `onclick="humanBid(${i})"` : 'disabled'} aria-label="${i === forbidden ? t('{n}, not allowed', { n: i }) : t('Bid {n}', { n: i })}">${i}</button>`;
+      btns += `<button class="bid-btn${i === forbidden ? ' forbidden' : ''}" ${ok ? `onclick="humanBid(${i})"` : 'disabled'} aria-keyshortcuts="${i}" aria-label="${i === forbidden ? t('{n}, not allowed', { n: i }) : t('Bid {n}', { n: i })}">${i}</button>`;
     }
     const sum = G.bids.reduce((a, b) => a + (b ?? 0), 0);
     const placed = [];
