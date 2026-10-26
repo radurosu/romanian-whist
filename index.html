@@ -469,10 +469,12 @@ button:disabled { cursor: default; }
   filter: saturate(.3) brightness(.82);
 }
 #hand-area .card.playable.kbd-sel {
-  transform: translateY(calc(var(--k) * var(--k) * .8px - 26px)) rotate(calc(var(--k) * 1.9deg));
-  box-shadow: 0 0 0 3px var(--brass), 0 0 18px rgba(242,193,78,.7), 0 12px 20px rgba(0,0,0,.4);
+  transform: translateY(calc(var(--k) * var(--k) * .8px - 34px)) rotate(0deg) scale(1.08);
+  box-shadow: 0 0 0 4px var(--brass), 0 0 26px rgba(242,193,78,.9), 0 14px 22px rgba(0,0,0,.45);
   z-index: 6;
 }
+/* while a card is picked, the other playable cards step back */
+#hand-area.has-kbd .card.playable:not(.kbd-sel) { box-shadow: 0 0 0 1px rgba(242,193,78,.45), 0 6px 12px rgba(0,0,0,.3); filter: brightness(.88); }
 #hand-area .card.suggested { outline: 3px solid var(--hint); outline-offset: 1px; }
 #hand-area .card.auto-play-glow { animation: auto-glow .9s ease-in-out infinite alternate; }
 @keyframes auto-glow {
@@ -488,6 +490,7 @@ button:disabled { cursor: default; }
 
 /* Action bar */
 .bid-btn.nope { animation: bid-nope .35s ease; }
+.bid-btn.kbd-sel { border-color: var(--brass); box-shadow: 0 0 0 2px var(--brass), 0 0 14px rgba(242,193,78,.6); color: var(--brass); }
 @keyframes bid-nope { 25% { transform: translateX(-4px); } 50% { transform: translateX(4px); } 75% { transform: translateX(-2px); } }
 body.my-turn #action-bar { animation: my-turn-glow 1.6s ease-in-out infinite; }
 @keyframes my-turn-glow { 0%, 100% { box-shadow: inset 0 3px 0 var(--brass), 0 -6px 18px rgba(242, 193, 78, .35); } 50% { box-shadow: inset 0 3px 0 transparent, 0 -6px 18px transparent; } }
@@ -4447,8 +4450,13 @@ function cardHTML(card, extra = '', tag = 'div', attrs = '') {
 // picks a card without playing it. Ignored while typing or with a sheet open.
 let kbdCard = null;
 function markKbdCard() {
-  document.querySelectorAll('#hand-area .card').forEach(el =>
-    el.classList.toggle('kbd-sel', el.dataset.rank + el.dataset.suit === kbdCard && el.classList.contains('playable')));
+  let any = false;
+  document.querySelectorAll('#hand-area .card').forEach(el => {
+    const on = el.dataset.rank + el.dataset.suit === kbdCard && el.classList.contains('playable');
+    el.classList.toggle('kbd-sel', on);
+    any = any || on;
+  });
+  document.getElementById('hand-area')?.classList.toggle('has-kbd', any);
 }
 document.addEventListener('keydown', e => {
   if (!['ArrowLeft', 'ArrowRight', 'Home', 'End', 'Enter', ' '].includes(e.key) || e.ctrlKey || e.metaKey || e.altKey) return;
@@ -4471,6 +4479,33 @@ document.addEventListener('keydown', e => {
   else i = (i + (e.key === 'ArrowLeft' ? -1 : 1) + cards.length) % cards.length;
   kbdCard = cards[i].rank + cards[i].suit;
   markKbdCard();
+});
+
+// On your bidding turn the arrows step through the allowed bids the same way
+// (the forbidden one is skipped) and Enter or Space places the picked bid.
+let kbdBid = null;
+function markKbdBid() {
+  document.querySelectorAll('#action-bar .bid-btn').forEach((el, i) => el.classList.toggle('kbd-sel', i === kbdBid));
+}
+document.addEventListener('keydown', e => {
+  if (!['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'Home', 'End', 'Enter', ' '].includes(e.key) || e.ctrlKey || e.metaKey || e.altKey) return;
+  if (e.target.closest && e.target.closest('input, textarea, select, [contenteditable]')) return;
+  if (!G || G.phase !== 'bidding' || G.currentBidderIndex !== ME || document.querySelector('.overlay')) return;
+  const { valid } = getValidBids(G.cardsPerPlayer, G.bids, isLastBidder());
+  if (!valid.length) return;
+  e.preventDefault();
+  let i = valid.indexOf(kbdBid);
+  if (e.key === 'Enter' || e.key === ' ') {
+    if (i >= 0) { const bid = valid[i]; kbdBid = null; humanBid(bid); return; }
+    i = 0;
+  } else if (e.key === 'Home') i = 0;
+  else if (e.key === 'End') i = valid.length - 1;
+  else {
+    const back = e.key === 'ArrowLeft' || e.key === 'ArrowDown';
+    i = i < 0 ? (back ? valid.length - 1 : 0) : (i + (back ? -1 : 1) + valid.length) % valid.length;
+  }
+  kbdBid = valid[i];
+  markKbdBid();
 });
 
 // ─── Bid from the keyboard ───
@@ -4533,6 +4568,7 @@ function renderAll() {
   renderCenter();
   renderHand();
   renderActionBar();
+  if (G.phase !== 'bidding' || G.currentBidderIndex !== ME) kbdBid = null;
   cueMyTurn();
 }
 
@@ -4671,6 +4707,7 @@ function renderActionBar() {
     bar.innerHTML = `<div class="bid-panel"><div class="bid-head"><div class="bid-info"><span><span class="lbl">${t('Your bid')}</span><span class="muted">${others}</span></span>${warn}</div>`
       + `<button class="hint-btn" onclick="toggleBidSuggestion()">${t('Hint')}</button></div>`
       + `<div class="bid-row" style="--cols:${cols};--nb:${nb}">${btns}</div></div>`;
+    markKbdBid();
   } else if (G.phase === 'bidding') {
     bar.innerHTML = `<span class="status-text">${t('{who} is bidding', { who: `<span class="who">${playerLabel(G.currentBidderIndex)}</span>` })}</span>`;
   } else if (G.phase === 'playing' && G.currentTrick.length >= G.numPlayers) {
