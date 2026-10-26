@@ -1149,6 +1149,11 @@ const RO = {
   "All {bids} were within a point of the engine's pick.": "Toate cele {bids} au fost la mai puțin de un punct de alegerea motorului.",
   "{n} no trump": "{n} fără atu",
   "Your turn": "Rândul tău",
+  "Resign": "Abandonează",
+  "Resign this game? It counts as a loss.": "Abandonezi jocul? Se pune ca pierdere.",
+  "You resigned": "Ai abandonat",
+  "Resign? A bot takes your seat and the game goes on without you.": "Abandonezi? Un bot îți ia locul și jocul continuă fără tine.",
+  "You resigned. A bot plays your seat for the rest of the game.": "Ai abandonat. Un bot joacă în locul tău până la final.",
   "Play check:": "Verificarea jocului:",
   "Play check": "Verificarea jocului",
   "after {cards}": "după {cards}",
@@ -3379,6 +3384,7 @@ function renderTopBar() {
     + (MP.active ? `<button class="tb-btn icon" onclick="toggleChat()" aria-label="${t('Chat')}" title="${t('Chat')}">💬${MP.chatUnread ? '<i class="dot"></i>' : ''}</button>` : '')
     + (MP.active && MP.isHost ? `<button class="tb-btn warn" onclick="hostEndGame()" title="${t('End the game for everyone')}">${t('End')}</button>` : '')
     + `<button class="tb-btn icon" onclick="toggleMute()" aria-label="${t(soundMuted ? 'Turn sound on' : 'Mute')}" title="${t(soundMuted ? 'Sound off' : 'Sound on')}">${soundMuted ? '🔇' : '🔊'}</button>`
+    + (MP.active && !MP.isHost ? `<button class="tb-btn icon" onclick="resignGame()" aria-label="${t('Resign')}" title="${t('Resign')}">🏳</button>` : '')
     + `<button class="tb-btn" onclick="showHistory()" title="${t('Score sheet')}">${t('Sheet')}</button>`
     + '</div>' + standingsHTML();
 }
@@ -4084,6 +4090,36 @@ function guestLeaveTable() {
   resetGame();
 }
 
+// Resign (guests): a bot takes the seat and the game goes on. The host has
+// End for the whole table instead, since the host's device runs the game.
+function resignGame() {
+  if (!MP.active || MP.isHost || !confirm(t('Resign? A bot takes your seat and the game goes on without you.'))) return;
+  const code = MP.sessionId;
+  MP.active = false;   // the seat-list listener must not read this as being dropped
+  MP.db.ref(`sessions/${code}`).off();
+  for (const path of ['game', `hands/${MP.mySeat}`, 'handCounts', 'chat', 'players', 'rematch']) MP.db.ref(`sessions/${code}/${path}`).off();
+  MP.db.ref(`sessions/${code}/actions`).push({ type: 'resign', uid: MP.uid, seat: MP.mySeat });
+  removeOverlays();
+  document.getElementById('chat-widget').classList.remove('open');
+  document.getElementById('game-screen').innerHTML = `<div class="ended-wrap"><div class="sheet setup-sheet"><h1>${t('You resigned')}</h1><p class="lede">${t('You resigned. A bot plays your seat for the rest of the game.')}</p><button class="btn-ink" onclick="location.href=location.pathname">${t('Back to the menu')}</button></div></div>`;
+}
+function hostSeatToBot(uid) {
+  const p = MP.players[uid];
+  if (!p) return;
+  const names = G.playerNames.slice();
+  names[p.seat] = pickOpponents(ALL_OPPONENTS.length).find(nm => !names.includes(nm)) || `Bot${p.seat}`;
+  G.playerNames = names;
+  delete MP.players[uid];
+  MP.humanSeats = new Set(Object.values(MP.players).map(x => x.seat));
+  MP.db.ref(`sessions/${MP.sessionId}/players/${uid}`).remove();
+  MP.db.ref(`sessions/${MP.sessionId}/playerNames`).set(names);
+  mpPushGameState();
+  renderAll();
+  // if the seat was due to act, the bot acts now
+  if (G.phase === 'bidding' && G.currentBidderIndex === p.seat) scheduleBidding(p.seat);
+  else if (G.phase === 'playing' && G.currentTrick.length < G.numPlayers && currentPlayerToAct() === p.seat) scheduleNextPlay();
+}
+
 function hostEndGame() {
   if (!MP.active || !MP.isHost) return;
   if (!confirm(t('End the game for everyone at the table?'))) return;
@@ -4522,6 +4558,7 @@ function mpListenActions() {
     snap.ref.remove();
     const from=MP.players[action.uid];
     if(!from||from.seat!==action.seat)return;   // only the player seated there (a bot may have taken it)
+    if(action.type==='resign'){hostSeatToBot(action.uid);return;}
     if(action.type==='bid'&&G.phase==='bidding'&&G.currentBidderIndex===action.seat){
       placeBid(action.seat,action.bid);
     } else if(action.type==='play'&&G.phase==='playing'&&currentPlayerToAct()===action.seat){
@@ -4557,7 +4594,7 @@ function addChatMessage(msg) {
   box.appendChild(div);box.scrollTop=box.scrollHeight;
   if(!document.getElementById('chat-widget').classList.contains('open')&&!isMe){
     MP.chatUnread=true;
-    if(G&&G.roundSequence)renderTopBar();
+    if(G&&G.roundSequence&&MP.active)renderTopBar();
   }
 }
 

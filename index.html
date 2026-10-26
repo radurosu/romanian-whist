@@ -1027,6 +1027,11 @@ const RO = {
   "All {bids} were within a point of the engine's pick.": "Toate cele {bids} au fost la mai puțin de un punct de alegerea motorului.",
   "{n} no trump": "{n} fără atu",
   "Your turn": "Rândul tău",
+  "Resign": "Abandonează",
+  "Resign this game? It counts as a loss.": "Abandonezi jocul? Se pune ca pierdere.",
+  "You resigned": "Ai abandonat",
+  "Resign? A bot takes your seat and the game goes on without you.": "Abandonezi? Un bot îți ia locul și jocul continuă fără tine.",
+  "You resigned. A bot plays your seat for the rest of the game.": "Ai abandonat. Un bot joacă în locul tău până la final.",
   "Play check:": "Verificarea jocului:",
   "Play check": "Verificarea jocului",
   "after {cards}": "după {cards}",
@@ -4279,6 +4284,7 @@ function resolveTrick() {
   renderAll();
 
   setTimeout(() => {
+    if (G.resigned) return;
     G.currentTrick = [];
     if (G.hands.every(h => !h || h.length === 0)) {
       endRound();
@@ -4486,6 +4492,7 @@ function renderTopBar() {
     + (G.scoringMode === 'geometric' ? `<span class="tb-mode">${t('Geometric')}</span>` : '')
     + '<span class="tb-spacer"></span>'
     + `<button class="tb-btn icon" onclick="toggleMute()" aria-label="${t(soundMuted ? 'Turn sound on' : 'Mute')}" title="${t(soundMuted ? 'Sound off' : 'Sound on')}">${soundMuted ? '🔇' : '🔊'}</button>`
+    + `<button class="tb-btn icon" onclick="resignGame()" aria-label="${t('Resign')}" title="${t('Resign')}">🏳</button>`
     + `<button class="tb-btn" onclick="showHistory()">${t('Score sheet')}</button>`
     + '</div>' + standingsHTML();
 }
@@ -5000,6 +5007,7 @@ function nextRound() {
 function ordinal(k) { return LANG === 'ro' ? String(k) : k + (['th', 'st', 'nd', 'rd'][(k % 100 - 20) % 10] || ['th', 'st', 'nd', 'rd'][k % 100] || 'th'); }
 
 function finalTitle() {
+  if (G.resigned) return { title: t('You resigned'), sub: '' };
   const max = Math.max(...G.scores);
   const winners = G.scores.map((s, i) => s === max ? i : -1).filter(i => i >= 0);
   const ranked = G.scores.map((s, i) => ({ s, i })).sort((a, b) => b.s - a.s);
@@ -5246,6 +5254,7 @@ function statsRecordFromGame(me, online, ai) {
     m: G.scoringMode === 'geometric' ? 'geometric' : 'linear', me, names: G.playerNames.slice(), ai, s: G.scores.slice(),
     r: (G.roundHistory || []).map(h => [h.cardsPerPlayer, h.bids.slice(), h.tricksWon.slice()]) };
   if (rec.r.length < G.roundSequence.length) rec.early = 1;
+  if (G.resigned) rec.resigned = 1;
   const checks = bidChecks(), c = [];
   for (const k in checks) { const x = checks[k]; if (x && x.bid != null) c.push([+k, x.pick, bidCheckBehind(x)]); }
   if (c.length) rec.c = c;
@@ -5291,7 +5300,7 @@ function statsCompute(list) {
     bc: { games: 0, bids: 0, behind: 0, flagged: 0 }, pc: { games: 0, choices: 0, flagged: 0, lost: 0 }, luck: [] };
   for (const g of list) {
     const n = g.names.length, me = g.me, sc = g.s;
-    const place = 1 + sc.filter((x, i) => i !== me && x > sc[me]).length;
+    const place = g.resigned ? n : 1 + sc.filter((x, i) => i !== me && x > sc[me]).length;   // resigning counts as last
     if (place === 1) S.wins++;
     S.fair += 1 / n; S.place += place; S.seats += n;
     S.form.push({ place, n, score: sc[me], m: g.m, t: g.t });
@@ -5398,6 +5407,17 @@ function showStats(stack = false) {
     `<span></span><button class="btn-ink" onclick="closeStats()">${t('Back')}</button>`, false, stack);
 }
 function closeStats() { document.getElementById('stats-overlay')?.remove(); }
+
+// Resign: the game ends now and counts as a loss (last place in your stats)
+function resignGame() {
+  if (!G.roundSequence || G.phase === 'gameOver' || !confirm(t('Resign this game? It counts as a loss.'))) return;
+  G.resigned = true;
+  G.phase = 'gameOver';
+  clearAutoPlay();
+  clearTimeout(autoBidTimer); autoBidTimer = null;
+  if (G.gameLog) G.gameLog.resigned = true;
+  showGameOver();
+}
 
 function showGameOver() {
   removeOverlays();
