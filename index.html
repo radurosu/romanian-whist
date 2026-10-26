@@ -468,6 +468,11 @@ button:disabled { cursor: default; }
   transform: translateY(calc(var(--k) * var(--k) * .8px + 4px)) rotate(calc(var(--k) * 1.9deg));
   filter: saturate(.3) brightness(.82);
 }
+#hand-area .card.playable.kbd-sel {
+  transform: translateY(calc(var(--k) * var(--k) * .8px - 26px)) rotate(calc(var(--k) * 1.9deg));
+  box-shadow: 0 0 0 3px var(--brass), 0 0 18px rgba(242,193,78,.7), 0 12px 20px rgba(0,0,0,.4);
+  z-index: 6;
+}
 #hand-area .card.suggested { outline: 3px solid var(--hint); outline-offset: 1px; }
 #hand-area .card.auto-play-glow { animation: auto-glow .9s ease-in-out infinite alternate; }
 @keyframes auto-glow {
@@ -4436,6 +4441,38 @@ function cardHTML(card, extra = '', tag = 'div', attrs = '') {
     + `</${tag}>`;
 }
 
+// ─── Play from the keyboard ───
+// On your turn ←/→ step through the cards you may play (Home/End jump to
+// the ends) and Enter or Space plays the one picked; the first arrow press
+// picks a card without playing it. Ignored while typing or with a sheet open.
+let kbdCard = null;
+function markKbdCard() {
+  document.querySelectorAll('#hand-area .card').forEach(el =>
+    el.classList.toggle('kbd-sel', el.dataset.rank + el.dataset.suit === kbdCard && el.classList.contains('playable')));
+}
+document.addEventListener('keydown', e => {
+  if (!['ArrowLeft', 'ArrowRight', 'Home', 'End', 'Enter', ' '].includes(e.key) || e.ctrlKey || e.metaKey || e.altKey) return;
+  if (e.target.closest && e.target.closest('input, textarea, select, [contenteditable]')) return;
+  const me = ME;
+  if (!G || G.phase !== 'playing' || currentPlayerToAct() !== me || G.currentTrick.length >= G.numPlayers || document.querySelector('.overlay')) return;
+  const hand = G.hands[me] || [];
+  const led = G.currentTrick.length ? G.currentTrick[0].card.suit : null;
+  const legal = getLegalMoves(hand, led, G.trumpSuit);
+  const cards = hand.filter(c => legal.some(l => l.rank === c.rank && l.suit === c.suit));   // in hand order
+  if (!cards.length) return;
+  e.preventDefault();
+  let i = cards.findIndex(c => c.rank + c.suit === kbdCard);
+  if (e.key === 'Enter' || e.key === ' ') {
+    if (i >= 0) { const c = cards[i]; kbdCard = null; humanPlayCard(c.rank, c.suit); return; }
+    i = 0;
+  } else if (e.key === 'Home') i = 0;
+  else if (e.key === 'End') i = cards.length - 1;
+  else if (i < 0) i = e.key === 'ArrowLeft' ? cards.length - 1 : 0;
+  else i = (i + (e.key === 'ArrowLeft' ? -1 : 1) + cards.length) % cards.length;
+  kbdCard = cards[i].rank + cards[i].suit;
+  markKbdCard();
+});
+
 // ─── Bid from the keyboard ───
 // On your bidding turn a digit key (top row or keypad) places that bid; a bid
 // that isn't allowed buzzes and shakes its button instead. Ignored while
@@ -4594,6 +4631,8 @@ function renderHand() {
     const act = myTurn && ok ? `onclick="humanPlayCard('${card.rank}','${card.suit}')"` : (myTurn ? 'aria-disabled="true"' : '');
     return cardHTML(card, cls, 'button', `${act} style="--k:${(i - mid).toFixed(2)}" aria-label="${cardName(card)}${myTurn && !ok ? t(', cannot be played now') : ''}"`);
   }).join('');
+  if (!myTurn) kbdCard = null;
+  markKbdCard();
   renderMeStrip();
 }
 
