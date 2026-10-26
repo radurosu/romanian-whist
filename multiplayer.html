@@ -4096,6 +4096,7 @@ function resignGame() {
   if (!MP.active || MP.isHost || !confirm(t('Resign? A bot takes your seat and the game goes on without you.'))) return;
   const code = MP.sessionId;
   MP.active = false;   // the seat-list listener must not read this as being dropped
+  clearSavedState();
   MP.db.ref(`sessions/${code}`).off();
   for (const path of ['game', `hands/${MP.mySeat}`, 'handCounts', 'chat', 'players', 'rematch']) MP.db.ref(`sessions/${code}/${path}`).off();
   MP.db.ref(`sessions/${code}/actions`).push({ type: 'resign', uid: MP.uid, seat: MP.mySeat });
@@ -4217,7 +4218,11 @@ function loadSavedState() {
     const finished=s.phase==='gameOver'||(s.phase==='roundResult'&&s.currentRoundIndex+1>=s.roundSequence.length);
     return finished?null:s;}catch(e){return null;}
 }
-function clearSavedState() { try{localStorage.removeItem('wist-mp-state');}catch(e){} }
+function clearSavedState() {
+  try{localStorage.removeItem('wist-mp-state');}catch(e){}
+  const slot=document.getElementById('resume-slot');   // the Resume button drawn at load is now stale
+  if(slot)slot.innerHTML='';
+}
 
 function resumeGame() {
   const saved=loadSavedState(); if(!saved)return;

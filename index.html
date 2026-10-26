@@ -5575,6 +5575,8 @@ function loadSavedState() {
 
 function clearSavedState() {
   try { localStorage.removeItem('wist-state'); } catch(e) {}
+  const slot = document.getElementById('resume-slot');   // the Resume button drawn at load is now stale
+  if (slot) slot.innerHTML = '';
 }
 
 function resumeGame() {
