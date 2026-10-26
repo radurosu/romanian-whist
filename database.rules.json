@@ -5,14 +5,30 @@
 
     "sessions": {
       "$code": {
-        ".read": "auth != null",
+        ".read": "auth != null && data.child('host').val() === auth.uid",
         ".write": "auth != null && (!data.exists() || data.child('host').val() === auth.uid)",
 
+        "numPlayers": { ".read": "auth != null" },
+        "host": { ".read": "auth != null" },
+        "phase": { ".read": "auth != null" },
+        "scoringMode": { ".read": "auth != null" },
+        "playerNames": { ".read": "auth != null" },
         "players": {
+          ".read": "auth != null",
           "$uid": {
             ".write": "auth != null && $uid === auth.uid"
           }
         },
+
+        "game": { ".read": "auth != null && root.child('sessions').child($code).child('players').child(auth.uid).exists()" },
+        "handCounts": { ".read": "auth != null && root.child('sessions').child($code).child('players').child(auth.uid).exists()" },
+        "rematch": { ".read": "auth != null && root.child('sessions').child($code).child('players').child(auth.uid).exists()" },
+        "hands": {
+          "$seat": {
+            ".read": "auth != null && root.child('sessions').child($code).child('players').child(auth.uid).child('seat').val() + '' === $seat"
+          }
+        },
+
         "actions": {
           ".write": "auth != null",
           "$action": {
@@ -20,6 +36,7 @@
           }
         },
         "chat": {
+          ".read": "auth != null && root.child('sessions').child($code).child('players').child(auth.uid).exists()",
           ".write": "auth != null",
           "$msg": {
             ".validate": "newData.child('uid').val() === auth.uid && newData.child('text').isString() && newData.child('text').val().length <= 500"
@@ -29,7 +46,6 @@
     },
 
     "gameLogs": {
-      ".read": "auth != null",
       "$key": {
         ".write": "auth != null"
       }

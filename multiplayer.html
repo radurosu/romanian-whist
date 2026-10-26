@@ -1600,7 +1600,7 @@ function logGameEnd() {
   // Save to Firebase
   if(MP.db){
     const key=G.gameLog.timestamp.replace(/[:.]/g,'-');
-    try{MP.db.ref(`gameLogs/${key}`).set(G.gameLog);}catch(e){console.warn('Failed to save log to Firebase',e);}
+    if(!MP.active||MP.isHost) try{MP.db.ref(`gameLogs/${key}`).set(G.gameLog);}catch(e){console.warn('Failed to save log to Firebase',e);}
   }
 }
 function downloadGameLogs() {
@@ -4322,7 +4322,7 @@ function mpCreateSession() {
   if(!name||mpSelectedCount<3) return;
   applyScoringSetting();
   mpInit().then(()=>{
-    const code=Math.random().toString(36).slice(2,6).toUpperCase();
+    const code=Math.random().toString(36).slice(2,8).toUpperCase();
     MP.sessionId=code; MP.isHost=true; MP.mySeat=0; MP.active=true;
     MP.selectedCount=mpSelectedCount;
     MP.players={[MP.uid]:{seat:0,name}};
@@ -4400,6 +4400,15 @@ function mpHostStartGame() {
   mpListenChat();
 }
 
+// The parts of a table anyone signed in may read before joining; the rest
+// (state, hands, chat) is for the players seated there
+function mpReadSession(code) {
+  const keys=['numPlayers','host','phase','scoringMode','playerNames','players'];
+  return Promise.all(keys.map(k=>MP.db.ref(`sessions/${code}/${k}`).once('value'))).then(snaps=>{
+    const s={};snaps.forEach((sn,i)=>{if(sn.val()!==null)s[keys[i]]=sn.val();});
+    return s.numPlayers?s:null;
+  });
+}
 function mpShowJoin(code,session) {
   document.getElementById('mp-setup-screen').classList.remove('active');
   document.getElementById('join-screen').classList.add('active');
@@ -4425,8 +4434,7 @@ function mpCompleteJoin() {
   document.getElementById('join-btn').disabled=true;
   document.getElementById('join-status').textContent=t('Connecting…');
   mpInit().then(()=>{
-    MP.db.ref(`sessions/${code}`).once('value').then(snap=>{
-      const session=snap.val();
+    mpReadSession(code).then(session=>{
       if(!session){document.getElementById('join-status').textContent=t('No table with this code. Check the link.');document.getElementById('join-btn').disabled=false;return;}
       const numPlayers=session.numPlayers;
       const myEntry=session.players&&session.players[MP.uid];
@@ -4474,7 +4482,11 @@ function mpCompleteJoin() {
 
 function mpPushGameState() {
   if(!MP.isHost) return;
+  // Everyone at the table reads this, so it carries no hands: not G.hands and
+  // not the game log (it records every deal). The full log goes to hostLog,
+  // which only the host can read, once per round, for a host reconnect.
   const pub=Object.assign({},G);delete pub.hands;
+  pub.gameLog=G.gameLog?{timestamp:G.gameLog.timestamp}:null;
   const counts=G.hands.map(h=>h.length);
   // Atomic multi-path update: game state + all hands in one write
   // This prevents the race where mpListenGameState fires before mpListenMyHand
@@ -4482,6 +4494,7 @@ function mpPushGameState() {
   updates[`sessions/${MP.sessionId}/game`]=pub;
   updates[`sessions/${MP.sessionId}/handCounts`]=counts;
   for(let i=0;i<G.numPlayers;i++) updates[`sessions/${MP.sessionId}/hands/${i}`]=G.hands[i];
+  if(G.gameLog&&(G.phase==='roundResult'||G.phase==='gameOver')) updates[`sessions/${MP.sessionId}/hostLog`]=G.gameLog;
   MP.db.ref('/').update(updates);
   MP.handCounts=counts;
 }
@@ -4656,6 +4669,7 @@ function mpTryHostReconnect() {
         MP.selectedCount=session.numPlayers;MP.players=session.players||{};
         MP.humanSeats=new Set(Object.values(MP.players).map(p=>p.seat));
         G=fixStateArrays(gs);
+        if(session.hostLog&&G.gameLog&&session.hostLog.timestamp===G.gameLog.timestamp){G.gameLog=session.hostLog;G.gameLog.rounds=fbToIndexedArray(G.gameLog.rounds);}
         G.hands=Array.from({length:G.numPlayers},(_,i)=>rawHands[i]?fbToIndexedArray(rawHands[i]):[]);
         MP.handCounts=G.hands.map(h=>h.length);
 
@@ -4699,8 +4713,7 @@ window.addEventListener('DOMContentLoaded',()=>{
     const code=joinCode.toUpperCase();
     // Init Firebase first so we have our UID, then check for existing seat
     mpInit().then(()=>{
-      MP.db.ref(`sessions/${code}`).once('value').then(snap=>{
-        const session=snap.val();
+      mpReadSession(code).then(session=>{
         if(!session){mpShowJoin(code);return;}
         const myEntry=session.players&&session.players[MP.uid];
         if(myEntry){
