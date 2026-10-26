@@ -2670,6 +2670,12 @@ function computeAIBid(playerIndex) {
   // PIMC bidding — bias & aggr tuned from 50k-game optimization
   if ((style === 'void' || style === 'tempo' || style === 'sniper' || style === 'precision' || style === 'spite' || style === 'grok' || style === 'codex') && cpp >= 2) {
     const sims=style==='codex'?CODEX_CFG.bidSims:(style==='grok'?GROK_CFG.bidSims:(style==='tempo'?60:80));
+    if (style === 'codex' && G.scoringMode === 'geometric') {
+      // EV already includes the geometric bonus. Adding a trick afterward
+      // overbids large hands; resolve a forbidden bid by simulated value too.
+      const bid = pimcBid(playerIndex, sims);
+      return constrainBidEV(bid, cpp, pimcBid.lastEV, 0);
+    }
     if (player.v2) {
       const k = ((player.kappa || NAMED_CFG.kappa)[G.scoringMode === 'geometric' ? 'geometric' : 'linear'][cpp] || 0) + (NAMED_CFG.lean[style] || 0);
       return constrainBidEV(pimcBid(playerIndex, sims, k), cpp, pimcBid.lastEV, k);
