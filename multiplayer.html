@@ -526,11 +526,18 @@ body.my-turn #action-bar { animation: my-turn-glow 1.6s ease-in-out infinite; }
 }
 .hint-btn:hover { background: rgba(143,208,255,.18); }
 .bid-panel { width: 100%; max-width: 520px; display: flex; flex-direction: column; gap: 7px; }
-.bid-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; font-size: 14px; }
+.bid-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; font-size: 16.5px; }
 .bid-info { display: flex; flex-direction: column; gap: 2px; line-height: 1.3; }
-.bid-info .muted b { color: var(--chalk); font-weight: 800; }
-.bid-info .warn { color: var(--bust); font-size: 13.5px; font-weight: 600; }
-.bid-head .lbl { font-weight: 800; font-size: 16px; color: var(--brass); margin-right: 6px; }
+.bid-info .muted { color: var(--chalk); }
+.bid-info .muted b { color: var(--brass); font-weight: 800; font-size: 19px; }
+.bid-info .warn { color: var(--bust); font-size: 15px; font-weight: 600; }
+.bid-head .lbl { font-weight: 800; font-size: 18px; color: var(--brass); margin-right: 6px; }
+@media (min-width: 700px) {
+  .bid-head { font-size: 19px; }
+  .bid-info .muted b { font-size: 23px; }
+  .bid-head .lbl { font-size: 21px; }
+  .bid-info .warn { font-size: 16.5px; }
+}
 .bid-row { display: grid; grid-template-columns: repeat(var(--cols, 5), 1fr); gap: 6px; }
 .bid-btn {
   height: 44px;
