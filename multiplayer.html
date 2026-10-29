@@ -1471,14 +1471,16 @@ const CODEX_CFG = {
   },
 };
 
-// Grok AI — calibrated PIMC + endgame (see test_grok.mjs / index.html)
+// Grok AI. Same bidder as index.html: kappa inside the PIMC value, one-card
+// solver, forced last bid by simulated value. Keep the two copies in step.
 const GROK_CFG = {
-  bias: 0.0476,
-  aggr: 1.02,
-  noise: 0.06,
   bidSims: 72,
   playSims: 72,
-  cppBias: {1:0, 2:-0.001, 3:-0.017, 4:-0.022, 5:-0.032, 6:-0.020, 7:-0.050, 8:0.055},
+  kappa: {
+    linear:    { 2: 1.73, 3: 1.97, 4: 1.69, 5: 1.49, 6: 1.33, 7: 0.67, 8: 0.65 },
+    geometric: { 2: 1.63, 3: 1.90, 4: 1.84, 5: 1.53, 6: 1.25, 7: 0.03, 8: -0.15 },
+  },
+  oneCardThreshold: 0.44,
   endgameMaxCards: 2,
   endgameSamples: 48,
   spiteBonus: 2.0,
@@ -2482,7 +2484,7 @@ function pimcCardScores(playerIndex, legalMoves, numSims, scoreOf, spite) {
   const scores = {};
   for (const c of legalMoves) scores[c.rank + c.suit] = 0;
   const isCodex = getStyle(playerIndex) === 'codex';
-  const smartTrick = isCodex || !!getPlayer(playerIndex).v2;
+  const smartTrick = getStyle(playerIndex) === 'grok' || isCodex || !!getPlayer(playerIndex).v2;
 
   for (let sim = 0; sim < numSims; sim++) {
     const sampled = isCodex
@@ -2644,6 +2646,10 @@ function computeAIBid(playerIndex) {
   let estimate = 0;
 
   if (cpp === 1) {
+    if (style === 'grok') {
+      estimate = codexOneCardWinProb(playerIndex);
+      return constrainBid(estimate > GROK_CFG.oneCardThreshold ? 1 : 0, estimate, cpp);
+    }
     if(style==='codex'||player.v2){
       estimate=codexOneCardWinProb(playerIndex);
       return constrainBid(estimate>(player.v2?NAMED_CFG.oneCardThreshold:CODEX_CFG.oneCardThreshold)?1:0,estimate,cpp);
@@ -2665,11 +2671,19 @@ function computeAIBid(playerIndex) {
     return est;
   }
 
+  // Grok: lean inside the sim, last bid by EV. See index.html.
+  if (style === 'grok' && cpp >= 2) {
+    const mode = G.scoringMode === 'geometric' ? 'geometric' : 'linear';
+    const k = GROK_CFG.kappa[mode][cpp] || 0;
+    const bid = pimcBid(playerIndex, GROK_CFG.bidSims, k);
+    return constrainBidEV(bid, cpp, pimcBid.lastEV, k);
+  }
+
   // PIMC bidding for all main styles (multi-card rounds)
   // Bias corrects for sim playout underestimating real trick-taking
   // PIMC bidding — bias & aggr tuned from 50k-game optimization
-  if ((style === 'void' || style === 'tempo' || style === 'sniper' || style === 'precision' || style === 'spite' || style === 'grok' || style === 'codex') && cpp >= 2) {
-    const sims=style==='codex'?CODEX_CFG.bidSims:(style==='grok'?GROK_CFG.bidSims:(style==='tempo'?60:80));
+  if ((style === 'void' || style === 'tempo' || style === 'sniper' || style === 'precision' || style === 'spite' || style === 'codex') && cpp >= 2) {
+    const sims=style==='codex'?CODEX_CFG.bidSims:(style==='tempo'?60:80);
     if (style === 'codex' && G.scoringMode === 'geometric') {
       // EV already includes the geometric bonus. Adding a trick afterward
       // overbids large hands; resolve a forbidden bid by simulated value too.
@@ -2680,16 +2694,16 @@ function computeAIBid(playerIndex) {
       const k = ((player.kappa || NAMED_CFG.kappa)[G.scoringMode === 'geometric' ? 'geometric' : 'linear'][cpp] || 0) + (NAMED_CFG.lean[style] || 0);
       return constrainBidEV(pimcBid(playerIndex, sims, k), cpp, pimcBid.lastEV, k);
     }
-    const biasMap={void:0.229,tempo:0.020,sniper:0.070,precision:0.165,grok:GROK_CFG.bias,codex:0};
-    const aggrMap={void:1.00,tempo:1.02,sniper:1.00,precision:0.98,grok:GROK_CFG.aggr,codex:1};
+    const biasMap={void:0.229,tempo:0.020,sniper:0.070,precision:0.165,codex:0};
+    const aggrMap={void:1.00,tempo:1.02,sniper:1.00,precision:0.98,codex:1};
     const bias = biasMap[style] || 0;
     const aggr = aggrMap[style] || 1.0;
     // Geometric scoring: bid up in big rounds, mild caution in small ones (tuned
     // to maximize geo score/round; see proto_cppbias.mjs). No-op in linear mode.
+    // Grok does not use this — see the kappa branch above.
     const geoBias = G.scoringMode === 'geometric'
       ? ({3:-0.2, 4:-0.2, 6:0.2, 7:0.6, 8:1.0}[cpp] || 0) : 0;
-    const cppBias = style === 'grok' ? (GROK_CFG.cppBias[cpp] || 0) : 0;
-    let bid = pimcBid(playerIndex, sims) + bias * Math.min(1, cpp / 4) + geoBias + cppBias;
+    let bid = pimcBid(playerIndex, sims) + bias * Math.min(1, cpp / 4) + geoBias;
     bid = bidAwarenessAdj(bid) * aggr;
     bid = Math.max(0, Math.min(cpp, Math.round(bid)));
     bid = constrainBid(bid, bid, cpp);
