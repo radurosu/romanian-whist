@@ -1378,19 +1378,32 @@ function toggleMute() {
   if (audioCtx) (soundMuted ? audioCtx.suspend() : audioCtx.resume()).catch(() => {});
   if (G && G.roundSequence) renderTopBar();
 }
-function ensureAudio() { if (!audioCtx) audioCtx = new AudioCtx(); }
-function playTone(freq, duration, type='sine', vol=0.15, detune=0) {
+function ensureAudio() { if (!audioCtx) audioCtx = new AudioCtx({ latencyHint: 'balanced' }); }
+// Every sound goes through one limiter, so overlapping sounds can't clip
+let audioOutNode = null;
+function audioOut() {
+  if (!audioOutNode) {
+    audioOutNode = audioCtx.createDynamicsCompressor();
+    audioOutNode.threshold.value = -10; audioOutNode.knee.value = 6; audioOutNode.ratio.value = 12;
+    audioOutNode.attack.value = 0.002; audioOutNode.release.value = 0.12;
+    audioOutNode.connect(audioCtx.destination);
+  }
+  return audioOutNode;
+}
+function playTone(freq, duration, type = 'sine', vol = 0.15, detune = 0, at = 0) {
   if (soundMuted) return;
   ensureAudio();
   const osc = audioCtx.createOscillator();
   const gain = audioCtx.createGain();
   osc.type = type; osc.frequency.value = freq; osc.detune.value = detune;
-  gain.gain.setValueAtTime(vol, audioCtx.currentTime);
-  gain.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + duration);
-  osc.connect(gain); gain.connect(audioCtx.destination);
-  osc.start(); osc.stop(audioCtx.currentTime + duration);
+  const t = audioCtx.currentTime + at;
+  gain.gain.setValueAtTime(0, t);
+  gain.gain.linearRampToValueAtTime(vol, t + 0.003);
+  gain.gain.exponentialRampToValueAtTime(0.001, t + duration);
+  osc.connect(gain); gain.connect(audioOut());
+  osc.start(t); osc.stop(t + duration);
 }
-function playNoise(duration, vol, filterType, filterFreq, q = 0.8, filterFreqEnd = null) {
+function playNoise(duration, vol, filterType, filterFreq, q = 0.8, filterFreqEnd = null, at = 0) {
   if (soundMuted) return;
   ensureAudio();
   const sr = audioCtx.sampleRate;
@@ -1408,36 +1421,38 @@ function playNoise(duration, vol, filterType, filterFreq, q = 0.8, filterFreqEnd
   const filt = audioCtx.createBiquadFilter();
   filt.type = filterType;
   filt.Q.value = q;
-  const t = audioCtx.currentTime;
+  const t = audioCtx.currentTime + at;
   filt.frequency.setValueAtTime(filterFreq, t);
   if (filterFreqEnd != null) {
     filt.frequency.exponentialRampToValueAtTime(Math.max(40, filterFreqEnd), t + duration);
   }
   const gain = audioCtx.createGain();
-  gain.gain.setValueAtTime(vol, t);
+  gain.gain.setValueAtTime(0, t);
+  gain.gain.linearRampToValueAtTime(vol, t + 0.003);
   gain.gain.exponentialRampToValueAtTime(0.0001, t + duration);
-  src.connect(filt); filt.connect(gain); gain.connect(audioCtx.destination);
+  src.connect(filt); filt.connect(gain); gain.connect(audioOut());
   src.start(t); src.stop(t + duration);
 }
 function sfxCardSwoosh(vol = 1) {
   playNoise(0.07, 0.14 * vol, 'bandpass', 4200 + Math.random() * 800, 0.55, 900 + Math.random() * 300);
   playNoise(0.055, 0.09 * vol, 'highpass', 2800, 0.5, 700);
 }
-function sfxCardSnap(vol = 1) {
-  playNoise(0.038, 0.28 * vol, 'highpass', 2000 + Math.random() * 600);
-  playNoise(0.028, 0.20 * vol, 'bandpass', 2800 + Math.random() * 800, 0.75);
+function sfxCardSnap(vol = 1, at = 0) {
+  playNoise(0.038, 0.28 * vol, 'highpass', 2000 + Math.random() * 600, 0.8, null, at);
+  playNoise(0.028, 0.20 * vol, 'bandpass', 2800 + Math.random() * 800, 0.75, null, at);
 }
-function sfxCardTable(vol = 1) {
-  playNoise(0.05, 0.12 * vol, 'lowpass', 280 + Math.random() * 80, 0.6);
-  playTone(110 + Math.random() * 30, 0.06, 'sine', 0.04 * vol);
+function sfxCardTable(vol = 1, at = 0) {
+  playNoise(0.05, 0.12 * vol, 'lowpass', 280 + Math.random() * 80, 0.6, null, at);
+  playTone(110 + Math.random() * 30, 0.06, 'sine', 0.04 * vol, 0, at);
 }
 function sfxCardFlick(vol = 1) {
   const hard = Math.random() > 0.45;
   const v = hard ? vol : vol * 0.82;
   sfxCardSwoosh(v * (hard ? 1 : 0.85));
   const snapAt = hard ? 28 : 38;
-  setTimeout(() => sfxCardSnap(v), snapAt);
-  setTimeout(() => sfxCardTable(v * (hard ? 1.05 : 0.9)), snapAt + (hard ? 8 : 12));
+  // on the audio clock, so a busy page can't stretch the gaps
+  sfxCardSnap(v, snapAt / 1000);
+  sfxCardTable(v * (hard ? 1.05 : 0.9), (snapAt + (hard ? 8 : 12)) / 1000);
 }
 function sfxCardPlay() { sfxCardFlick(1); }
 function sfxBid() {
@@ -4074,7 +4089,7 @@ function queuePlayCheck(card) {
     const best = legal.reduce((a, b) => entry.val[cardKey(b)] > entry.val[cardKey(a)] ? b : a);
     entry.pick = { rank: best.rank, suit: best.suit };
     (playChecks()[round] || (playChecks()[round] = [])).push(entry);
-  }, 50);
+  }, 300);   // after the card's sound, so the simulations can't stutter it
 }
 function playCheckLost(x) { return Math.round((x.val[cardKey(x.pick)] - x.val[cardKey(x.card)]) * 10) / 10; }
 function playCheckFlagged(list) {
