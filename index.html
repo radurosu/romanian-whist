@@ -1054,7 +1054,7 @@ const RO = {
   "Listening in English (one, two, next). Tap here for Romanian.": "Ascult în engleză (one, two, next). Atinge aici pentru română.",
   "The microphone is blocked for this site. Allow it in the site settings (the icon left of the address), then tap 🎤 again.": "Microfonul e blocat pentru acest site. Permite-l din setările site-ului (iconița din stânga adresei), apoi apasă din nou 🎤.",
   "This browser has speech recognition turned off. On a Mac with Safari, turn on Dictation in System Settings → Keyboard. Chrome works too.": "Recunoașterea vocală e oprită în acest browser. Pe Mac cu Safari, pornește Dictarea din Setări sistem → Tastatură. Merge și în Chrome.",
-  "This browser can't reach a speech service (Brave, Arc and some others don't include one). Use Chrome, Edge or Safari.": "Browserul nu are un serviciu de recunoaștere vocală (Brave, Arc și altele nu includ unul). Folosește Chrome, Edge sau Safari.",
+  "Can't reach the speech service (Google's in Chrome). Check the connection, VPN or firewall; Brave and Arc don't include one.": "Nu pot ajunge la serviciul de recunoaștere vocală (al Google în Chrome). Verifică conexiunea, VPN-ul sau firewall-ul; Brave și Arc nu au unul.",
   "No microphone found.": "Nu am găsit niciun microfon.",
   "Voice bidding stopped ({code}).": "Licitarea vocală s-a oprit ({code}).",
   "Listening. Say your bid on your turn, or “next” for the next round.": "Ascult. Spune-ți licitația când e rândul tău, sau „gata” pentru runda următoare.",
@@ -4633,7 +4633,7 @@ function voiceNote(msg, bad) {
 const VOICE_ERRORS = {
   'not-allowed': 'The microphone is blocked for this site. Allow it in the site settings (the icon left of the address), then tap 🎤 again.',
   'service-not-allowed': 'This browser has speech recognition turned off. On a Mac with Safari, turn on Dictation in System Settings → Keyboard. Chrome works too.',
-  'network': 'This browser can\'t reach a speech service (Brave, Arc and some others don\'t include one). Use Chrome, Edge or Safari.',
+  'network': 'Can\'t reach the speech service (Google\'s in Chrome). Check the connection, VPN or firewall; Brave and Arc don\'t include one.',
   'audio-capture': 'No microphone found.',
 };
 function voiceFail(code) {
@@ -4675,8 +4675,9 @@ function startVoice() {
     voice.lang = voiceLang() === 'ro' ? 'ro-RO' : 'en-US';
     voice.continuous = true;
     voice.interimResults = true;
-    let used = -1, told = false;   // a phrase acts once, even as its interim versions keep coming
+    let used = -1, told = false, netFails = 0;   // a phrase acts once, even as its interim versions keep coming
     voice.onresult = e => {
+      netFails = 0;
       for (let i = e.resultIndex; i < e.results.length; i++) {
         if (i <= used) continue;
         const r = e.results[i];
@@ -4685,12 +4686,17 @@ function startVoice() {
         if ((r.isFinal || (text.trim().split(/\s+/).length === 1 && (voiceNumber(text) !== null || VOICE_NEXT.test(text)))) && voiceHeard(text)) used = i;
       }
     };
-    voice.onend = () => { if (voiceOn) try { voice.start(); } catch (e) {} };   // browsers stop after silence
+    // browsers stop after silence; restart (a second later after a network hiccup)
+    voice.onend = () => { if (voiceOn) setTimeout(() => { if (voiceOn && voice) try { voice.start(); } catch (e) {} }, netFails ? 1000 : 0); };
     voice.onstart = () => {
       used = -1;   // each session (browsers restart them after silence) numbers its phrases from 0
       if (!told) { told = true; voiceLangNote(); }
     };
-    voice.onerror = e => { if (VOICE_ERRORS[e.error]) voiceFail(e.error); };   // no-speech / aborted: just restart
+    voice.onerror = e => {
+      // Chrome's speech service drops now and then: retry quietly, give up after three in a row
+      if (e.error === 'network' && ++netFails < 3) return;
+      if (VOICE_ERRORS[e.error]) voiceFail(e.error);   // no-speech / aborted: just restart
+    };
     try { voice.start(); } catch (e) { voiceFail('start'); return; }
   } else if (voice) { voice.onend = null; voice.abort(); voice = null; }
   renderTopBar();
