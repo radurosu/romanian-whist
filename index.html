@@ -1050,6 +1050,8 @@ const RO = {
   "All {bids} were within a point of the engine's pick.": "Toate cele {bids} au fost la mai puțin de un punct de alegerea motorului.",
   "{n} no trump": "{n} fără atu",
   "Your turn": "Rândul tău",
+  "Listening in Romanian (una, două, gata). Tap here for English.": "Ascult în română (una, două, gata). Atinge aici pentru engleză.",
+  "Listening in English (one, two, next). Tap here for Romanian.": "Ascult în engleză (one, two, next). Atinge aici pentru română.",
   "The microphone is blocked for this site. Allow it in the site settings (the icon left of the address), then tap 🎤 again.": "Microfonul e blocat pentru acest site. Permite-l din setările site-ului (iconița din stânga adresei), apoi apasă din nou 🎤.",
   "This browser has speech recognition turned off. On a Mac with Safari, turn on Dictation in System Settings → Keyboard. Chrome works too.": "Recunoașterea vocală e oprită în acest browser. Pe Mac cu Safari, pornește Dictarea din Setări sistem → Tastatură. Merge și în Chrome.",
   "This browser can't reach a speech service (Brave, Arc and some others don't include one). Use Chrome, Edge or Safari.": "Browserul nu are un serviciu de recunoaștere vocală (Brave, Arc și altele nu includ unul). Folosește Chrome, Edge sau Safari.",
@@ -4578,8 +4580,8 @@ document.addEventListener('keydown', e => {
 // and Safari send the audio to Google / Apple to transcribe it.
 const SpeechRec = window.SpeechRecognition || window.webkitSpeechRecognition;
 const VOICE_WORDS = {
-  zero: 0, oh: 0, nil: 0, none: 0, nothing: 0, nimic: 0,
-  one: 1, won: 1, unu: 1, una: 1, un: 1,
+  zero: 0, oh: 0, nil: 0, none: 0, nothing: 0, nimic: 0, niciuna: 0, nicio: 0, niciunul: 0,
+  one: 1, won: 1, unu: 1, una: 1, un: 1, unul: 1,
   two: 2, to: 2, too: 2, doi: 2, doua: 2, 'două': 2,
   three: 3, tree: 3, free: 3, trei: 3,
   four: 4, for: 4, fore: 4, patru: 4,
@@ -4647,14 +4649,33 @@ function toggleVoice() {
   if (voiceOn) { voiceOn = false; if (voice) { voice.onend = null; voice.abort(); voice = null; } voiceNote(''); renderTopBar(); return; }
   startVoice();
 }
+// The listening language is its own choice (you may play in English and say
+// numbers in Romanian): remembered on this device, Romanian by default when
+// the game or the browser is Romanian. Tap the note to switch.
+function voiceLang() {
+  let v = null;
+  try { v = localStorage.getItem('wist-voice-lang'); } catch (e) {}
+  return v || (LANG === 'ro' || (navigator.languages || []).some(l => /^ro\b/i.test(l)) ? 'ro' : 'en');
+}
+function voiceLangNote() {
+  const ro = voiceLang() === 'ro';
+  voiceNote(t(ro ? 'Listening in Romanian (una, două, gata). Tap here for English.' : 'Listening in English (one, two, next). Tap here for Romanian.'));
+  const n = document.getElementById('voice-note');
+  if (n) { n.style.cursor = 'pointer'; n.onclick = switchVoiceLang; }
+}
+function switchVoiceLang() {
+  try { localStorage.setItem('wist-voice-lang', voiceLang() === 'ro' ? 'en' : 'ro'); } catch (e) {}
+  if (voice) { voice.lang = voiceLang() === 'ro' ? 'ro-RO' : 'en-US'; voice.abort(); }   // restarts in the new language
+  voiceLangNote();
+}
 function startVoice() {
   voiceOn = !voiceOn;
   if (voiceOn) {
     voice = new SpeechRec();
-    voice.lang = LANG === 'ro' ? 'ro-RO' : 'en-US';
+    voice.lang = voiceLang() === 'ro' ? 'ro-RO' : 'en-US';
     voice.continuous = true;
     voice.interimResults = true;
-    let used = -1;   // a phrase acts once, even as its interim versions keep coming
+    let used = -1, told = false;   // a phrase acts once, even as its interim versions keep coming
     voice.onresult = e => {
       for (let i = e.resultIndex; i < e.results.length; i++) {
         if (i <= used) continue;
@@ -4665,7 +4686,10 @@ function startVoice() {
       }
     };
     voice.onend = () => { if (voiceOn) try { voice.start(); } catch (e) {} };   // browsers stop after silence
-    voice.onstart = () => voiceNote(t('Listening. Say your bid on your turn, or “next” for the next round.'));
+    voice.onstart = () => {
+      used = -1;   // each session (browsers restart them after silence) numbers its phrases from 0
+      if (!told) { told = true; voiceLangNote(); }
+    };
     voice.onerror = e => { if (VOICE_ERRORS[e.error]) voiceFail(e.error); };   // no-speech / aborted: just restart
     try { voice.start(); } catch (e) { voiceFail('start'); return; }
   } else if (voice) { voice.onend = null; voice.abort(); voice = null; }
