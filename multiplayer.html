@@ -286,6 +286,7 @@ button:disabled { cursor: default; }
   .tb-btn { padding: 0 11px; }
   .tb-btn.icon { width: 32px; padding: 0; }
 }
+@media (max-width: 370px) { .tb-row { gap: 5px; } .tb-btn { padding: 0 9px; } .tb-btn.icon { width: 30px; } }
 @media (max-width: 340px) { .tb-lbl { display: none; } .tb-row { gap: 6px; } }
 @media (min-width: 900px) and (min-height: 700px) {
   .seat { min-width: 104px; max-width: 150px; padding: 7px 11px 8px; }
@@ -494,6 +495,8 @@ button:disabled { cursor: default; }
 
 /* Action bar */
 .bid-btn.nope { animation: bid-nope .35s ease; }
+.tb-btn.voice { opacity: .6; }
+.tb-btn.voice.on { opacity: 1; box-shadow: inset 0 0 0 2px var(--brass); animation: my-turn-glow 1.6s ease-in-out infinite; }
 .bid-btn.kbd-sel { border-color: var(--brass); box-shadow: 0 0 0 2px var(--brass), 0 0 14px rgba(242,193,78,.6); color: var(--brass); }
 @keyframes bid-nope { 25% { transform: translateX(-4px); } 50% { transform: translateX(4px); } 75% { transform: translateX(-2px); } }
 body.my-turn #action-bar { animation: my-turn-glow 1.6s ease-in-out infinite; }
@@ -1166,6 +1169,10 @@ const RO = {
   "All {bids} were within a point of the engine's pick.": "Toate cele {bids} au fost la mai puțin de un punct de alegerea motorului.",
   "{n} no trump": "{n} fără atu",
   "Your turn": "Rândul tău",
+  "Bid by voice": "Licitează cu vocea",
+  "Voice bidding: on": "Licitare vocală: pornită",
+  "Voice bidding: off": "Licitare vocală: oprită",
+  "Voice bidding: on — say a number on your turn": "Licitare vocală pornită — spune un număr când e rândul tău",
   "Resign": "Abandonează",
   "Resign this game? It counts as a loss.": "Abandonezi jocul? Se pune ca pierdere.",
   "You resigned": "Ai abandonat",
@@ -3417,6 +3424,69 @@ document.addEventListener('keydown', e => {
   markKbdBid();
 });
 
+// ─── Bid by voice ───
+// The browser's own speech recognition (Chrome, Edge, Safari; no library).
+// While the mic is on, a number heard on your bidding turn places that bid,
+// in English or Romanian ("two", "doi", "2"); a forbidden one buzzes. Chrome
+// and Safari send the audio to Google / Apple to transcribe it.
+const SpeechRec = window.SpeechRecognition || window.webkitSpeechRecognition;
+const VOICE_WORDS = {
+  zero: 0, oh: 0, nil: 0, none: 0, nothing: 0, nimic: 0,
+  one: 1, won: 1, unu: 1, una: 1, un: 1,
+  two: 2, to: 2, too: 2, doi: 2, doua: 2, 'două': 2,
+  three: 3, tree: 3, free: 3, trei: 3,
+  four: 4, for: 4, fore: 4, patru: 4,
+  five: 5, cinci: 5,
+  six: 6, sase: 6, 'șase': 6, 'şase': 6,
+  seven: 7, sapte: 7, 'șapte': 7, 'şapte': 7,
+  eight: 8, ate: 8, opt: 8,
+};
+let voice = null, voiceOn = false;
+// The last number in what was heard ("I bid two" -> 2), or null
+function voiceNumber(text) {
+  const words = String(text).toLowerCase().match(/[\p{L}\d]+/gu) || [];
+  for (let i = words.length - 1; i >= 0; i--) {
+    const w = words[i];
+    if (/^\d$/.test(w)) return +w;
+    if (w in VOICE_WORDS) return VOICE_WORDS[w];
+  }
+  return null;
+}
+function voiceHeard(text) {
+  if (!G || G.phase !== 'bidding' || G.currentBidderIndex !== M() || document.querySelector('.overlay')) return false;
+  const bid = voiceNumber(text);
+  if (bid === null || bid > G.cardsPerPlayer) return false;
+  if (getValidBids(G.cardsPerPlayer, G.bids, isLastBidder()).valid.includes(bid)) { humanBid(bid); return true; }
+  sfxForbidden();
+  const btn = document.querySelectorAll('#action-bar .bid-btn')[bid];
+  if (btn) { btn.classList.remove('nope'); void btn.offsetWidth; btn.classList.add('nope'); }
+  return true;
+}
+function toggleVoice() {
+  if (!SpeechRec) return;
+  voiceOn = !voiceOn;
+  if (voiceOn) {
+    voice = new SpeechRec();
+    voice.lang = LANG === 'ro' ? 'ro-RO' : 'en-US';
+    voice.continuous = true;
+    voice.interimResults = true;
+    let used = -1;   // a phrase acts once, even as its interim versions keep coming
+    voice.onresult = e => {
+      for (let i = e.resultIndex; i < e.results.length; i++) {
+        if (i <= used) continue;
+        const r = e.results[i];
+        // a bare number acts at once; a longer phrase waits for its final form
+        const text = r[0].transcript;
+        if ((r.isFinal || (text.trim().split(/\s+/).length === 1 && voiceNumber(text) !== null)) && voiceHeard(text)) used = i;
+      }
+    };
+    voice.onend = () => { if (voiceOn) try { voice.start(); } catch (e) {} };   // browsers stop after silence
+    voice.onerror = e => { if (e.error === 'not-allowed' || e.error === 'service-not-allowed') { voiceOn = false; renderTopBar(); } };
+    try { voice.start(); } catch (e) { voiceOn = false; }
+  } else if (voice) { voice.onend = null; voice.abort(); voice = null; }
+  renderTopBar();
+}
+
 // ─── Bid from the keyboard ───
 // On your bidding turn a digit key (top row or keypad) places that bid; a bid
 // that isn't allowed buzzes and shakes its button instead. Ignored while
@@ -3503,6 +3573,7 @@ function renderTopBar() {
     + '<span class="tb-spacer"></span>'
     + (MP.active ? `<button class="tb-btn icon" onclick="toggleChat()" aria-label="${t('Chat')}" title="${t('Chat')}">💬${MP.chatUnread ? '<i class="dot"></i>' : ''}</button>` : '')
     + (MP.active && MP.isHost ? `<button class="tb-btn warn" onclick="hostEndGame()" title="${t('End the game for everyone')}">${t('End')}</button>` : '')
+    + (SpeechRec ? `<button class="tb-btn icon voice${voiceOn ? ' on' : ''}" onclick="toggleVoice()" aria-pressed="${voiceOn}" aria-label="${t(voiceOn ? 'Voice bidding: on' : 'Voice bidding: off')}" title="${t(voiceOn ? 'Voice bidding: on — say a number on your turn' : 'Bid by voice')}">🎤</button>` : '')
     + `<button class="tb-btn icon" onclick="toggleMute()" aria-label="${t(soundMuted ? 'Turn sound on' : 'Mute')}" title="${t(soundMuted ? 'Sound off' : 'Sound on')}">${soundMuted ? '🔇' : '🔊'}</button>`
     + (MP.active && !MP.isHost ? `<button class="tb-btn icon" onclick="resignGame()" aria-label="${t('Resign')}" title="${t('Resign')}">🏳</button>` : '')
     + `<button class="tb-btn" onclick="showHistory()" title="${t('Score sheet')}">${t('Sheet')}</button>`
