@@ -491,6 +491,9 @@ button:disabled { cursor: default; }
 
 /* Action bar */
 .bid-btn.nope { animation: bid-nope .35s ease; }
+#voice-note { position: absolute; left: 50%; bottom: calc(100% + 6px); transform: translateX(-50%); max-width: min(92vw, 520px); padding: 7px 12px; border-radius: 10px;
+  background: rgba(0,0,0,.72); color: var(--chalk); font-size: 14px; line-height: 1.35; z-index: 30; text-align: center; }
+#voice-note.bad { background: rgba(120,20,20,.92); }
 .tb-btn.voice { opacity: .6; }
 .tb-btn.voice.on { opacity: 1; box-shadow: inset 0 0 0 2px var(--brass); animation: my-turn-glow 1.6s ease-in-out infinite; }
 .bid-btn.kbd-sel { border-color: var(--brass); box-shadow: 0 0 0 2px var(--brass), 0 0 14px rgba(242,193,78,.6); color: var(--brass); }
@@ -1047,6 +1050,12 @@ const RO = {
   "All {bids} were within a point of the engine's pick.": "Toate cele {bids} au fost la mai puțin de un punct de alegerea motorului.",
   "{n} no trump": "{n} fără atu",
   "Your turn": "Rândul tău",
+  "The microphone is blocked for this site. Allow it in the site settings (the icon left of the address), then tap 🎤 again.": "Microfonul e blocat pentru acest site. Permite-l din setările site-ului (iconița din stânga adresei), apoi apasă din nou 🎤.",
+  "This browser has speech recognition turned off. On a Mac with Safari, turn on Dictation in System Settings → Keyboard. Chrome works too.": "Recunoașterea vocală e oprită în acest browser. Pe Mac cu Safari, pornește Dictarea din Setări sistem → Tastatură. Merge și în Chrome.",
+  "This browser can't reach a speech service (Brave, Arc and some others don't include one). Use Chrome, Edge or Safari.": "Browserul nu are un serviciu de recunoaștere vocală (Brave, Arc și altele nu includ unul). Folosește Chrome, Edge sau Safari.",
+  "No microphone found.": "Nu am găsit niciun microfon.",
+  "Voice bidding stopped ({code}).": "Licitarea vocală s-a oprit ({code}).",
+  "Listening. Say your bid on your turn.": "Ascult. Spune-ți licitația când e rândul tău.",
   "Bid by voice": "Licitează cu vocea",
   "Voice bidding: on": "Licitare vocală: pornită",
   "Voice bidding: off": "Licitare vocală: oprită",
@@ -4585,8 +4594,33 @@ function voiceHeard(text) {
   if (btn) { btn.classList.remove('nope'); void btn.offsetWidth; btn.classList.add('nope'); }
   return true;
 }
+// A short note under your hand: what the mic is doing, or why it can't
+function voiceNote(msg, bad) {
+  document.getElementById('voice-note')?.remove();
+  if (!msg) return;
+  document.getElementById('me-area').insertAdjacentHTML('beforeend', `<div id="voice-note" class="${bad ? 'bad' : ''}" role="status">🎤 ${msg}</div>`);
+  if (!bad) setTimeout(() => { const n = document.getElementById('voice-note'); if (n && n.textContent.includes(msg)) n.remove(); }, 3500);
+}
+const VOICE_ERRORS = {
+  'not-allowed': 'The microphone is blocked for this site. Allow it in the site settings (the icon left of the address), then tap 🎤 again.',
+  'service-not-allowed': 'This browser has speech recognition turned off. On a Mac with Safari, turn on Dictation in System Settings → Keyboard. Chrome works too.',
+  'network': 'This browser can\'t reach a speech service (Brave, Arc and some others don\'t include one). Use Chrome, Edge or Safari.',
+  'audio-capture': 'No microphone found.',
+};
+function voiceFail(code) {
+  voiceOn = false;
+  if (voice) { voice.onend = null; try { voice.abort(); } catch (e) {} voice = null; }
+  voiceNote(t(VOICE_ERRORS[code] || 'Voice bidding stopped ({code}).', { code }), true);
+  renderTopBar();
+}
+// Started straight from the tap: Safari only allows it there, and starting
+// is what brings up the microphone prompt
 function toggleVoice() {
   if (!SpeechRec) return;
+  if (voiceOn) { voiceOn = false; if (voice) { voice.onend = null; voice.abort(); voice = null; } voiceNote(''); renderTopBar(); return; }
+  startVoice();
+}
+function startVoice() {
   voiceOn = !voiceOn;
   if (voiceOn) {
     voice = new SpeechRec();
@@ -4604,8 +4638,9 @@ function toggleVoice() {
       }
     };
     voice.onend = () => { if (voiceOn) try { voice.start(); } catch (e) {} };   // browsers stop after silence
-    voice.onerror = e => { if (e.error === 'not-allowed' || e.error === 'service-not-allowed') { voiceOn = false; renderTopBar(); } };
-    try { voice.start(); } catch (e) { voiceOn = false; }
+    voice.onstart = () => voiceNote(t('Listening. Say your bid on your turn.'));
+    voice.onerror = e => { if (VOICE_ERRORS[e.error]) voiceFail(e.error); };   // no-speech / aborted: just restart
+    try { voice.start(); } catch (e) { voiceFail('start'); return; }
   } else if (voice) { voice.onend = null; voice.abort(); voice = null; }
   renderTopBar();
 }
