@@ -1177,7 +1177,7 @@ const RO = {
   "This browser can't reach a speech service (Brave, Arc and some others don't include one). Use Chrome, Edge or Safari.": "Browserul nu are un serviciu de recunoaștere vocală (Brave, Arc și altele nu includ unul). Folosește Chrome, Edge sau Safari.",
   "No microphone found.": "Nu am găsit niciun microfon.",
   "Voice bidding stopped ({code}).": "Licitarea vocală s-a oprit ({code}).",
-  "Listening. Say your bid on your turn.": "Ascult. Spune-ți licitația când e rândul tău.",
+  "Listening. Say your bid on your turn, or “next” for the next round.": "Ascult. Spune-ți licitația când e rândul tău, sau „gata” pentru runda următoare.",
   "Bid by voice": "Licitează cu vocea",
   "Voice bidding: on": "Licitare vocală: pornită",
   "Voice bidding: off": "Licitare vocală: oprită",
@@ -3461,7 +3461,19 @@ function voiceNumber(text) {
   }
   return null;
 }
+// "next" on the round sheet deals the next round (or shows the final scores);
+// on a sheet that offers to end the game it means Play on, never End game
+const VOICE_NEXT = /(?<!\p{L})(next|nexts|text|necks|nest|deal|continue|go on|gata|urm[aă]toarea|mai departe|[iî]mparte|continu[aă]|hai)(?!\p{L})/iu;
+function voiceNext(text) {
+  const ov = document.getElementById('round-overlay');
+  if (!ov || document.querySelectorAll('.overlay').length > 1 || !VOICE_NEXT.test(text)) return false;
+  const btn = ov.querySelector('button[onclick="nextRound()"]') || ov.querySelector('.sheet-foot .btn-ink[onclick="showGameOver()"]');
+  if (!btn) return false;   // a guest online: the host deals
+  btn.click();
+  return true;
+}
 function voiceHeard(text) {
+  if (voiceNext(text)) return true;
   if (!G || G.phase !== 'bidding' || G.currentBidderIndex !== M() || document.querySelector('.overlay')) return false;
   const bid = voiceNumber(text);
   if (bid === null || bid > G.cardsPerPlayer) return false;
@@ -3511,11 +3523,11 @@ function startVoice() {
         const r = e.results[i];
         // a bare number acts at once; a longer phrase waits for its final form
         const text = r[0].transcript;
-        if ((r.isFinal || (text.trim().split(/\s+/).length === 1 && voiceNumber(text) !== null)) && voiceHeard(text)) used = i;
+        if ((r.isFinal || (text.trim().split(/\s+/).length === 1 && (voiceNumber(text) !== null || VOICE_NEXT.test(text)))) && voiceHeard(text)) used = i;
       }
     };
     voice.onend = () => { if (voiceOn) try { voice.start(); } catch (e) {} };   // browsers stop after silence
-    voice.onstart = () => voiceNote(t('Listening. Say your bid on your turn.'));
+    voice.onstart = () => voiceNote(t('Listening. Say your bid on your turn, or “next” for the next round.'));
     voice.onerror = e => { if (VOICE_ERRORS[e.error]) voiceFail(e.error); };   // no-speech / aborted: just restart
     try { voice.start(); } catch (e) { voiceFail('start'); return; }
   } else if (voice) { voice.onend = null; voice.abort(); voice = null; }
