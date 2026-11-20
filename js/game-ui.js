@@ -129,6 +129,17 @@ const RO = {
   ", led": ", a deschis",
   "trump {s}": "atu {s}",
   "high {s}": "cea mai mare {s}",
+  "Replay": "Reluare",
+  "Play this round again": "Joacă din nou runda",
+  "Replay a key round": "Reia o rundă cheie",
+  "Same cards, same seats; the bots play live. Tap any row of the sheet for the others.": "Aceleași cărți, aceleași locuri; boții joacă din nou. Atinge orice rând din foaie pentru celelalte.",
+  "bid {b}, took {w}": "licitat {b}, luat {w}",
+  "Replay of round {n}": "Reluarea rundei {n}",
+  "This time": "Acum",
+  "In the game": "În joc",
+  "{d} points": "{d} puncte",
+  "Play it again": "Încă o dată",
+  "Back to results": "Înapoi la rezultate",
   "Download this game": "Descarcă acest joc",
   "Trump: {s}": "Atu: {s}",
   "No trump this round": "Fără atu în această rundă",
@@ -1218,7 +1229,7 @@ function renderTopBar() {
     : sum > cpp ? t('Overbid by {n}: someone has to miss', { n: sum - cpp })
     : t('Underbid by {n}: tricks are up for grabs', { n: cpp - sum });
   document.getElementById('topbar').innerHTML = '<div class="tb-row">'
-    + `<span class="tb-round">${t('Round {n}', { n: G.currentRoundIndex + 1 })}<small>/${G.roundSequence.length}</small></span>`
+    + `<span class="tb-round">${G.practice ? `<span class="tb-replay">${t('Replay')}</span> ` : ''}${t('Round {n}', { n: G.currentRoundIndex + 1 })}<small>/${G.roundSequence.length}</small></span>`
     + eightCardRoundHTML()
     + `<span class="tb-stat" title="${title}"><span class="tb-lbl">${t('Bids')} </span><b class="${cls}">${sum}</b>/${cpp}</span>`
     + (G.scoringMode === 'geometric' ? `<span class="tb-mode">${t('Geometric')}</span>` : '')
@@ -1573,11 +1584,12 @@ function showRoundReview(r) {
   const head = `<h2>${t('Round {n}', { n: r + 1 })}<small>${nOf(h.cardsPerPlayer, 'card', 'cards', 'carte', 'cărți')}, ${trumpStr}</small></h2>`
     + `<p class="sub">${roundSummary(h.roundScores, h.bids, h.tricksWon)}</p>${bidCheckHTML(r)}${playCheckHTML(r)}`;
   openSheet('review-overlay', head, `<div class="review">${trickLogHTML(h.trickHistory, playChecks()[r], true, h.trumpSuit)}</div>`,
-    `<span></span><button class="btn-ink" onclick="closeReview()">${t('Back')}</button>`, true, true);
+    `<span class="foot-links">${canReplayRounds() ? `<button onclick="replayRound(${r})">${t('Play this round again')}</button>` : ''}</span><button class="btn-ink" onclick="closeReview()">${t('Back')}</button>`, true, true);
 }
 function closeReview() { document.getElementById('review-overlay')?.remove(); }
 
 function showRoundResult(roundScores) {
+  if (G.practice) return showPracticeResult(roundScores);
   const r = G.currentRoundIndex;
   const isLast = r + 1 >= G.roundSequence.length;
   const trumpStr = G.trumpSuit ? t('{s} trump', { s: SUIT_SYMBOL[G.trumpSuit] }) : t('no trump');
@@ -1914,8 +1926,107 @@ function showStats(stack = false) {
 }
 function closeStats() { document.getElementById('stats-overlay')?.remove(); }
 
+// ─── Replay a finished round ───
+// Once the game is over (played out or resigned), any finished round can be
+// dealt again: the same hands, trump and dealer, the scores as they stood
+// before it, and the bots bidding and playing live. The replay runs on a copy:
+// it never touches the real game, its log, the saved state or your stats.
+let practiceSaved = null;
+function canReplayRounds() {
+  return !!(G && G.phase === 'gameOver' && !G.practice && G.gameLog && G.gameLog.rounds && G.gameLog.rounds.length);
+}
+// Rounds worth another go, worst first: points a made bid would have scored
+// over what you got, plus what the play check says your card choices cost.
+function keyRounds(limit = 4) {
+  const hist = G.roundHistory || [], pc = playChecks(), done = new Set((G.gameLog?.rounds || []).map(x => x.roundIdx));
+  return hist.map((h, r) => {
+    const bid = h.bids[ME], got = h.roundScores[ME];
+    const missed = h.tricksWon[ME] !== bid ? scoreRound(bid, bid) - got : 0;
+    const play = playCheckFlagged(pc[r]).reduce((a, x) => a + playCheckLost(x), 0);
+    return { r, bid, won: h.tricksWon[ME], got, cost: missed + play };
+  }).filter(x => done.has(x.r) && x.cost >= 1).sort((a, b) => b.cost - a.cost).slice(0, limit);
+}
+function keyRoundsHTML() {
+  if (!canReplayRounds()) return '';
+  const list = keyRounds();
+  const btns = list.map(x => {
+    const h = G.roundHistory[x.r];
+    const deal = h.trumpSuit ? `${h.cardsPerPlayer}${SUIT_SYMBOL[h.trumpSuit]}` : t('{n} no trump', { n: h.cardsPerPlayer });
+    return `<button class="kr-btn" onclick="replayRound(${x.r})"><b>${t('Round {n}', { n: x.r + 1 })}</b> <span>${deal} · ${t('bid {b}, took {w}', { b: x.bid, w: x.won })} · ${signed(x.got)}</span></button>`;
+  }).join('');
+  return `<div class="key-rounds"><p class="sub"><b>${t('Replay a key round')}</b> ${t('Same cards, same seats; the bots play live. Tap any row of the sheet for the others.')}</p>${btns}</div>`;
+}
+function replayRound(r) {
+  if (G.practice) { const live = practiceSaved; endPractice(false); if (G !== live) return; }
+  if (!canReplayRounds()) return;
+  const rec = G.gameLog.rounds.find(x => x.roundIdx === r);
+  const orig = G.roundHistory[r];
+  if (!rec || !orig) return;
+  stopLuckCheck();
+  removeOverlays();
+  practiceSaved = G;
+  const n = G.numPlayers;
+  const P = JSON.parse(JSON.stringify(Object.assign({}, G, { gameLog: null, bidChecks: null, playChecks: null })));
+  P.practice = { round: r, bid: orig.bids[ME], won: orig.tricksWon[ME], got: orig.roundScores[ME] };
+  P.resigned = false;
+  P.roundHistory = P.roundHistory.slice(0, r);
+  P.scores = r ? P.roundHistory[r - 1].cumulativeScores.slice() : new Array(n).fill(0);
+  P.currentRoundIndex = r;
+  P.dealerIndex = rec.dealer;
+  P.cardsPerPlayer = rec.cardsPerPlayer;
+  P.bids = new Array(n).fill(null);
+  P.biddingComplete = false;
+  P.currentTrick = [];
+  P.tricksWon = new Array(n).fill(0);
+  P.fullDeck = buildDeck(n);
+  P.playedCards = [];
+  P.trickHistory = [];
+  P.lastTrick = null;
+  P.trickWinnerIndex = -1;
+  P.knownVoids = {};
+  for (let i = 0; i < n; i++) P.knownVoids[i] = {};
+  P.hands = Array.from({ length: n }, (_, p) => (rec.hands[p] || []).map(parseCardStr));
+  sortHand(P.hands[ME]);
+  P.trumpCard = rec.trump ? parseCardStr(rec.trump) : null;
+  P.trumpSuit = P.trumpCard ? P.trumpCard.suit : null;
+  P.currentBidderIndex = (P.dealerIndex + 1) % n;
+  P.phase = 'bidding';
+  G = P;
+  sfxDeal(G.cardsPerPlayer);
+  renderAll();
+  if (G.currentBidderIndex !== ME) setTimeout(processAIBid, 600);
+  else checkAutoBid();
+}
+// Back to the finished game and its results sheet
+function endPractice(showSheet = true) {
+  if (!practiceSaved) return;
+  clearAutoPlay();
+  clearTimeout(autoBidTimer); autoBidTimer = null;
+  G = practiceSaved;
+  practiceSaved = null;
+  removeOverlays();
+  renderAll();
+  if (showSheet) renderGameOverSheet();
+}
+function showPracticeResult(roundScores) {
+  const r = G.currentRoundIndex, o = G.practice;
+  const bid = G.bids[ME], won = G.tricksWon[ME], got = roundScores[ME];
+  const line = (b, w, pts) => `${t('bid {b}, took {w}', { b, w })}: <b class="${pts < 0 ? 'neg' : ''}">${signed(pts)}</b>`;
+  const diff = got - o.got;
+  const head = `<h2>${t('Replay of round {n}', { n: r + 1 })}<small>${nOf(G.cardsPerPlayer, 'card', 'cards', 'carte', 'cărți')}, ${G.trumpSuit ? t('{s} trump', { s: SUIT_SYMBOL[G.trumpSuit] }) : t('no trump')}</small></h2>`
+    + `<p class="sub practice-cmp">${t('This time')}: ${line(bid, won, got)} · ${t('In the game')}: ${line(o.bid, o.won, o.got)}`
+    + (diff ? ` · <b class="${diff < 0 ? 'neg' : ''}">${t('{d} points', { d: signed(diff) })}</b>` : '') + '</p>'
+    + `${bidCheckHTML(r)}${playCheckHTML(r)}`;
+  const body = sheetTableHTML({ highlight: r });
+  const foot = (trickLogHTML(G.trickHistory, playChecks()[r], true, G.trumpSuit) || '<span></span>')
+    + `<span class="foot-links"><button onclick="replayRound(${r})">${t('Play it again')}</button>`
+    + `<button class="btn-ink" onclick="endPractice()">${t('Back to results')}</button></span>`;
+  openSheet('round-overlay', head, body, foot, false);
+}
+
 // Resign: the game ends now and counts as a loss (last place in your stats)
 function resignGame() {
+  if (G.practice) { endPractice(); return; }   // in a replay, resigning just leaves it
   if (!G.roundSequence || G.phase === 'gameOver') return;
   openSheet('resign-overlay', `<h2>${t('Resign this game?')}</h2>${winChanceHTML()}`,
     `<p class="resign-note">${t('Resigning counts as a loss. You can keep playing instead.')}</p>`,
@@ -1935,16 +2046,21 @@ function confirmResignGame() {
 function showGameOver() {
   removeOverlays();
   clearSavedState();
+  G.phase = 'gameOver';
   logGameEnd();
   sfxGameOver();
+  renderGameOverSheet();
+}
+function renderGameOverSheet() {
   const { title } = finalTitle();
-  openSheet('gameover-overlay', `<h2>${title}</h2>${finalRankHTML()}<div id="luck-box" class="luck"></div>${bidCheckSummaryHTML()}${playCheckSummaryHTML()}`,
+  openSheet('gameover-overlay', `<h2>${title}</h2>${finalRankHTML()}<div id="luck-box" class="luck"></div>${bidCheckSummaryHTML()}${playCheckSummaryHTML()}${keyRoundsHTML()}`,
     sheetTableHTML({ final: true }),
     `<span class="foot-links"><button onclick="showStats(true)">${t('Your stats')}</button><button onclick="downloadThisGame()">${t('Download this game')}</button></span><button class="btn-ink" onclick="resetGame()">${t('Play again')}</button>`, false);
   startLuckCheck();
 }
 
 function resetGame() {
+  practiceSaved = null;
   stopLuckCheck();
   removeOverlays();
   document.getElementById('game-screen').classList.remove('active');
@@ -2070,6 +2186,7 @@ function toggleBidSuggestion() {
 
 // ─── LocalStorage Persistence ───
 function saveState() {
+  if (G && G.practice) return;   // a replay must never overwrite the real game
   try { localStorage.setItem('wist-state', JSON.stringify(G)); } catch(e) {}
 }
 

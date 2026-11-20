@@ -2641,8 +2641,9 @@ function resolveTrick() {
   gameEffects.sfxTrickWin();
   gameEffects.renderAll();
 
+  const game = G;   // a replay can be left mid-trick: never finish its trick on another game
   setTimeout(() => {
-    if (G.resigned) return;
+    if (G !== game || G.resigned) return;
     G.currentTrick = [];
     if (G.hands.every(h => !h || h.length === 0)) {
       endRound();
