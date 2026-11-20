@@ -129,6 +129,7 @@ const RO = {
   ", led": ", a deschis",
   "trump {s}": "atu {s}",
   "high {s}": "cea mai mare {s}",
+  "Download this game": "Descarcă acest joc",
   "Trump: {s}": "Atu: {s}",
   "No trump this round": "Fără atu în această rundă",
   "led": "a deschis",
@@ -593,6 +594,36 @@ function downloadGameLogs() {
   } else {
     downloadLocalLogs();
   }
+}
+
+// This game so far, as one JSON file to hand over for analysis: every deal,
+// bid and card played (with who played it), results, and the engine's bid
+// and play checks for your seat. Includes the round in progress, if any.
+function downloadThisGame() {
+  if (!G || !G.gameLog) return;
+  const log = JSON.parse(JSON.stringify(G.gameLog));
+  if (log._currentRound) { log.roundInProgress = log._currentRound; }
+  delete log._currentRound;
+  const data = {
+    kind: 'romanian-whist-game',
+    you: ME,
+    players: G.playerNames.slice(),
+    scoringMode: G.scoringMode || 'linear',
+    roundSequence: G.roundSequence.slice(),
+    roundsPlayed: (G.roundHistory || []).length,
+    scores: G.scores.slice(),
+    winChance: G.playerNames.map((_, p) => +estimateWinChance(p, 1500).chance.toFixed(3)),
+    bidChecks: bidChecks(),
+    playChecks: playChecks(),
+    log,
+  };
+  const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `whist-game-${(log.timestamp || new Date().toISOString()).slice(0, 16).replace(/[:T]/g, '-')}-r${data.roundsPlayed}.json`;
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 
 function downloadLocalLogs() {
@@ -1556,11 +1587,12 @@ function showRoundResult(roundScores) {
   const winNote = champ >= 0 ? `<p class="sub won-note">${t('You have clinched first place. Nobody can catch up, even with perfect rounds from here.')}</p>` : '';
   const head = `<h2>${t('Round {n}', { n: r + 1 })}<small>${nOf(G.cardsPerPlayer, 'card', 'cards', 'carte', 'cărți')}, ${trumpStr}</small></h2><p class="sub">${roundSummary(roundScores)}</p>${bidCheckHTML(r)}${playCheckHTML(r)}${outNote}${winNote}`;
   const body = sheetTableHTML({ highlight: (G.roundHistory || []).length - 1, winRow: true });
-  const foot = (trickLogHTML(G.trickHistory, playChecks()[r], false, G.trumpSuit) || '<span></span>') + (isLast
+  const dl = `<button onclick="downloadThisGame()">${t('Download this game')}</button>`;
+  const foot = (trickLogHTML(G.trickHistory, playChecks()[r], false, G.trumpSuit) || '<span></span>') + `<span class="foot-links">${dl}` + (isLast
     ? `<button class="btn-ink" onclick="showGameOver()">${t('See final scores')}</button>`
     : out || champ >= 0
-    ? `<span class="foot-links"><button onclick="nextRound()">${t('Play on')}</button><button class="btn-ink" onclick="showGameOver()">${t('End game')}</button></span>`
-    : `<button class="btn-ink" onclick="nextRound()">${t('Next round')}</button>`);
+    ? `<button onclick="nextRound()">${t('Play on')}</button><button class="btn-ink" onclick="showGameOver()">${t('End game')}</button>`
+    : `<button class="btn-ink" onclick="nextRound()">${t('Next round')}</button>`) + '</span>';
   openSheet('round-overlay', head, body, foot, false);
 }
 
@@ -1908,7 +1940,7 @@ function showGameOver() {
   const { title } = finalTitle();
   openSheet('gameover-overlay', `<h2>${title}</h2>${finalRankHTML()}<div id="luck-box" class="luck"></div>${bidCheckSummaryHTML()}${playCheckSummaryHTML()}`,
     sheetTableHTML({ final: true }),
-    `<span class="foot-links"><button onclick="showStats(true)">${t('Your stats')}</button></span><button class="btn-ink" onclick="resetGame()">${t('Play again')}</button>`, false);
+    `<span class="foot-links"><button onclick="showStats(true)">${t('Your stats')}</button><button onclick="downloadThisGame()">${t('Download this game')}</button></span><button class="btn-ink" onclick="resetGame()">${t('Play again')}</button>`, false);
   startLuckCheck();
 }
 
@@ -1927,7 +1959,7 @@ function showHistory() {
   if (!G || !G.roundSequence) return;
   openSheet('history-overlay', `<h2>${t('Score sheet')}</h2><p class="sub">${scoringLine()}</p>`,
     sheetTableHTML({ winRow: true }),
-    `<div class="foot-links"><button id="download-btn" onclick="downloadGameLogs()">${t('Download game logs')}</button></div>`
+    `<div class="foot-links"><button onclick="downloadThisGame()">${t('Download this game')}</button><button id="download-btn" onclick="downloadGameLogs()">${t('Download game logs')}</button></div>`
     + `<button class="btn-ink" onclick="removeOverlays()">${t('Back to the table')}</button>`, true);
 }
 
