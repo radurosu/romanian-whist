@@ -1368,9 +1368,10 @@ function sheetTableHTML({ highlight = -1, final = false, winRow = false } = {}) 
       const d = row.roundScores[p];
       const ring = final && r === lastIdx && row.cumulativeScores[p] === max ? RING_SVG : '';
       h += `<td class="cell${made ? '' : ' miss'}${meCol}" style="--c:${p + 1}">`
-        + `<span class="wb" title="${t('tricks taken / bid')}">${row.tricksWon[p]}/${row.bids[p]}</span>`
+        + `<span class="sm"><span class="wb" title="${t('tricks taken / bid')}">${row.tricksWon[p]}/${row.bids[p]}</span>`
         + (r === highlight ? `<span class="d">${d > 0 ? '+' : ''}${d}</span>` : '')
-        + `<span class="tot">${row.cumulativeScores[p]}</span>${p === ME ? `<span class="score-gap" title="${t('Lead over the best opponent')}">(${signed(scoreGap(row.cumulativeScores))})</span>` : ''}${ring}</td>`;
+        + (p === ME ? `<span class="score-gap" title="${t('Lead over the best opponent')}">(${signed(scoreGap(row.cumulativeScores))})</span>` : '')
+        + `</span><span class="tot">${row.cumulativeScores[p]}</span>${ring}</td>`;
     }
     h += '</tr>';
   });

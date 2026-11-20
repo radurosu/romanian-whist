@@ -813,12 +813,13 @@ table.score-sheet {
 /* SVGs need explicit dimensions: inset alone retains their intrinsic size. */
 .final-rank .ring { width:calc(100% + 16px); height:calc(100% + 4px); overflow:visible; }
 .score-sheet .ring { width:calc(100% + 2px); height:calc(100% + 4px); overflow:visible; }
-/* Bid, total and leader gap occupy separate lines, including highlighted rows. */
-.score-sheet td.cell { height:58px; padding:5px 4px; }
-.score-sheet .cell .wb, .score-sheet tr.now .cell .wb { position:static; display:block; line-height:1.2; font-size:11px; }
-.score-sheet .cell .tot, .score-sheet tr.now .cell .tot { margin:0; padding-top:3px; line-height:1.15; }
-.score-sheet .cell .d, .score-sheet tr.now .cell .d { top:5px; bottom:auto; }
-.score-sheet .score-gap { line-height:1.3; margin-top:2px; }
+/* Two lines per cell: the small figures (taken/bid, round change, your gap
+   to the leader) share one line, the running total sits under them. */
+.score-sheet td.cell, .score-sheet tr.now td.cell { height:44px; padding:4px 3px; }
+.score-sheet .cell .sm { display:flex; flex-wrap:wrap; justify-content:center; column-gap:5px; font-size:11px; line-height:1.25; }
+.score-sheet .cell .wb, .score-sheet .cell .d, .score-sheet tr.now .cell .wb, .score-sheet tr.now .cell .d { position:static; font-size:11px; line-height:1.25; }
+.score-sheet .cell .score-gap { display:inline; font-size:11px; line-height:1.25; margin:0; }
+.score-sheet .cell .tot, .score-sheet tr.now .cell .tot { margin:0; padding-top:2px; line-height:1.15; }
 /* Win-chance line pinned to the bottom of the sheet, like the header at the top. */
 .score-sheet tfoot td { position:sticky; bottom:0; z-index:2; height:36px; background:var(--paper); border-top:2px solid var(--ink); font-size:17px; font-weight:700; }
 .score-sheet tfoot td.me-col { background:linear-gradient(rgba(35,67,168,.06), rgba(35,67,168,.06)), var(--paper); }
