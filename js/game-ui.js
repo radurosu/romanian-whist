@@ -1349,7 +1349,7 @@ function scoringLine() {
 
 const RING_SVG = '<svg class="ring" viewBox="0 0 100 40" preserveAspectRatio="none" aria-hidden="true"><path vector-effect="non-scaling-stroke" d="M30,5 C12,6 3,13 4,21 C6,33 30,37 55,36 C80,35 97,29 96,18 C95,8 74,3 50,4 C38,4 26,6 18,10"/></svg>';
 
-function sheetTableHTML({ highlight = -1, final = false } = {}) {
+function sheetTableHTML({ highlight = -1, final = false, winRow = false } = {}) {
   const n = G.numPlayers, hist = G.roundHistory || [];
   const lastIdx = hist.length - 1;
   const max = Math.max(...G.scores);
@@ -1374,7 +1374,19 @@ function sheetTableHTML({ highlight = -1, final = false } = {}) {
     }
     h += '</tr>';
   });
-  return h + '</tbody></table>';
+  return h + '</tbody>' + (winRow ? winChanceRowHTML() : '') + '</table>';
+}
+
+// One row under the sheet: each player's chance of finishing first. Ties
+// count as wins for everyone tied, so the row can add up to more than 100%.
+function winChanceRowHTML() {
+  let h = `<tfoot><tr class="win-row" title="${t('Score-based estimate from scores, remaining rounds and bidding accuracy. Ties count as wins.')}"><td class="rc">${t('win')}</td>`;
+  for (let p = 0; p < G.numPlayers; p++) {
+    const e = estimateWinChance(p, 1500);   // half the samples: one estimate per player
+    const pct = e.certain ? (e.chance === 1 ? '100%' : '0%') : winChanceText(e).replace('≈', '');
+    h += `<td class="${p === ME ? 'me-col' : ''}">${pct}</td>`;
+  }
+  return h + '</tr></tfoot>';
 }
 
 function trickLogHTML(tricks, checks, open = false) {
@@ -1521,7 +1533,7 @@ function showRoundResult(roundScores) {
   const outNote = out ? `<p class="sub out-note">${t('You can no longer finish first, even with perfect rounds from here.')}</p>` : '';
   const winNote = champ >= 0 ? `<p class="sub won-note">${t('You have clinched first place. Nobody can catch up, even with perfect rounds from here.')}</p>` : '';
   const head = `<h2>${t('Round {n}', { n: r + 1 })}<small>${nOf(G.cardsPerPlayer, 'card', 'cards', 'carte', 'cărți')}, ${trumpStr}</small></h2><p class="sub">${roundSummary(roundScores)}</p>${bidCheckHTML(r)}${playCheckHTML(r)}${outNote}${winNote}`;
-  const body = sheetTableHTML({ highlight: (G.roundHistory || []).length - 1 }) + winChanceHTML();
+  const body = sheetTableHTML({ highlight: (G.roundHistory || []).length - 1, winRow: true });
   const foot = (trickLogHTML(G.trickHistory, playChecks()[r]) || '<span></span>') + (isLast
     ? `<button class="btn-ink" onclick="showGameOver()">${t('See final scores')}</button>`
     : out || champ >= 0
@@ -1892,7 +1904,7 @@ function removeOverlays() {
 function showHistory() {
   if (!G || !G.roundSequence) return;
   openSheet('history-overlay', `<h2>${t('Score sheet')}</h2><p class="sub">${scoringLine()}</p>`,
-    sheetTableHTML({}) + winChanceHTML(),
+    sheetTableHTML({ winRow: true }),
     `<div class="foot-links"><button id="download-btn" onclick="downloadGameLogs()">${t('Download game logs')}</button></div>`
     + `<button class="btn-ink" onclick="removeOverlays()">${t('Back to the table')}</button>`, true);
 }
@@ -2191,6 +2203,7 @@ Object.assign(RO, {
   'Chance of finishing first: {chance}': 'Șansa de a termina pe primul loc: {chance}',
   'Score-based estimate; ties count as wins. The current hand is not evaluated.': 'Estimare pe baza scorurilor; egalitatea contează ca victorie. Mâna curentă nu este evaluată.',
   'Score-based estimate from scores, remaining rounds and bidding accuracy. Ties count as wins.': 'Estimare pe baza scorurilor, rundelor rămase și preciziei licitațiilor. Egalitatea contează ca victorie.',
-  '8 cards · {x} of {n}': '8 cărți · {x} din {n}'
+  '8 cards · {x} of {n}': '8 cărți · {x} din {n}',
+  'win': 'șanse'
 });
 translateStatic();
