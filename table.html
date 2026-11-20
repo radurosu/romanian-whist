@@ -1,0 +1,112 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Romanian Whist">
+<meta name="theme-color" content="#0f3a30">
+<link rel="manifest" href="manifest.json">
+<link rel="apple-touch-icon" href="icon-180.png">
+<title>Romanian Whist · The Table</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Kalam:wght@400;700&family=Sofia+Sans+Semi+Condensed:wght@500;600;700;800&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="css/game.css">
+<link rel="stylesheet" href="css/table.css">
+</head>
+<body>
+
+<!-- Setup Screen -->
+<div id="setup-screen">
+  <div class="welcome" data-no-i18n>
+    <a class="wordmark" href="index.html">♠ &nbsp; WHIST / THE TABLE</a>
+    <div class="welcome-copy"><span class="eyebrow">A LITTLE FORESIGHT. A LITTLE NERVE.</span>
+    <h2>Know when<br>to win.<br><em>And when not to.</em></h2>
+    <p>One card, then eight, then back again. Call your tricks, read the table, and make every hand count.</p>
+    <div class="welcome-cards" aria-hidden="true"><div>Q<span>♠</span></div><div>A<span>♥</span></div><div>K<span>♣</span></div></div></div>
+    <span class="welcome-foot">ROMANIAN WHIST &nbsp; / &nbsp; 3–6 PLAYERS</span>
+  </div>
+  <div class="sheet setup-sheet">
+    <div class="lang-switch" role="group" aria-label="Language"><button data-lang="en" onclick="setLang('en')">EN</button><button data-lang="ro" onclick="setLang('ro')">RO</button></div>
+    <span class="eyebrow" data-no-i18n>YOUR NEXT HAND STARTS HERE</span><h1>Take a seat.</h1>
+    <p class="lede">Bid exactly the tricks you will take. Hands grow from one card to eight, then back.</p>
+    <p class="ask">How many at the table?</p>
+    <div class="player-select">
+      <button onclick="startGame(3)" aria-label="3 players">3</button>
+      <button onclick="startGame(4)" aria-label="4 players">4</button>
+      <button onclick="startGame(5)" aria-label="5 players">5</button>
+      <button onclick="startGame(6)" aria-label="6 players">6</button>
+    </div>
+    <p class="player-select-cap">Players, you included. Pick a number to deal.</p>
+    <label class="opt chance-option"><input type="checkbox" id="win-chances-toggle"><span><b>Show win chances after each round</b><small>Approximate score-based estimate, including ties for first.</small></span></label>
+    <details class="table-options"><summary>Table settings &amp; opponents</summary><div class="opts">
+      <label class="opt">
+        <input type="checkbox" id="codex-toggle" checked onchange="onCodexToggle()">
+        <span><b>⌘ Codex</b> takes a free seat<small id="codex-hint">Bid-conditioned Monte Carlo player, tournament tuned.</small></span>
+      </label>
+      <label class="opt">
+        <input type="checkbox" id="grok-toggle" checked onchange="onGrokToggle()">
+        <span><b>🜲 Grok</b> takes a free seat<small id="grok-hint">Monte Carlo player with exact endgame search.</small></span>
+      </label>
+      <label class="opt">
+        <input type="checkbox" id="gemini-toggle" onchange="onGeminiToggle()">
+        <span><b>🤖 Gemini</b> plays with your API key</span>
+      </label>
+      <input type="password" id="gemini-key" class="opt-key" placeholder="Gemini API key" autocomplete="off" style="display:none">
+      <span id="gemini-hint" class="opt-note" style="display:none">The key stays in this browser.</span>
+      <label class="opt" id="jev-toggle-row" style="display:none">
+        <input type="checkbox" id="jev-toggle" onchange="onJevToggle()">
+        <span><b>∵ Jev</b> (TypeSafe) takes a seat</span>
+      </label>
+      <span id="jev-hint" class="opt-note" style="display:none">Runs through the local proxy. If the API is down, a Monte Carlo player stands in.</span>
+      <label class="opt">
+        <input type="checkbox" id="geometric-toggle" onchange="onScoringToggle()">
+        <span><b>Geometric scoring</b><small id="geometric-hint" style="display:none">Made bid B scores 5 + B(B+1)/2. Missing by d costs d(d+1)/2.</small></span>
+      </label>
+      <label class="opt">
+        <input type="checkbox" class="fast-toggle" onchange="setFastPlay(this.checked)">
+        <span><b>Fast play</b><small>Makes your forced moves for you: the only allowed bid, the only playable card, and interchangeable cards like 9-8-7 of a suit.</small></span>
+      </label>
+    </div>
+    </details>
+    <div class="setup-actions">
+      <a href="index.html" class="link-ink">← Original table</a>
+      <div id="resume-slot" data-no-i18n></div>
+      <a href="multiplayer.html" class="link-ink">Play online with friends</a>
+      <button class="link-ink" onclick="showStats()">Your stats</button>
+    </div>
+  </div>
+</div>
+
+<!-- Game Screen -->
+<div id="game-screen">
+  <button id="rail-toggle" class="rail-toggle" onclick="toggleTableRail()" aria-controls="table-rail" aria-expanded="true" aria-label="Collapse sidebar" title="Collapse sidebar">‹</button>
+  <aside id="table-rail">
+    <a href="table.html" class="wordmark">♠ &nbsp; THE TABLE</a>
+    <div id="round-guide"></div>
+    <div class="rail-actions"><button onclick="showHistory()">Score sheet ↗</button><button onclick="showStats()">Your stats ↗</button>
+    <details><summary>How to play</summary><p>Bid how many tricks you’ll take. Follow the led suit; if you can’t, play a trump if you have one. The highest trump wins, otherwise the highest card of the led suit wins.</p><p>The last bidder cannot make total bids equal the number of tricks.</p><p id="rail-scoring"></p></details></div>
+    <span class="rail-foot">A GAME OF EXACTLY ENOUGH.</span>
+  </aside><header id="topbar"></header>
+  <main id="table">
+    <div id="table-center"></div>
+    <div id="trick-area"></div>
+    <div id="seats"></div>
+  </main>
+  <section id="me-area" aria-label="Your hand">
+    <div id="me-strip"></div>
+    <div id="hand-area"></div>
+  </section>
+  <footer id="action-bar" aria-live="polite"></footer>
+</div>
+
+<script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-auth-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-database-compat.js"></script>
+<script src="js/game-engine.js"></script>
+<script src="js/game-ui.js"></script>
+<script src="js/table-ui.js"></script>
+</body>
+</html>

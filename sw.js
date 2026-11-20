@@ -1,9 +1,9 @@
-const CACHE = 'wist-v25';
-const ASSETS = ['./', './index.html', './multiplayer.html', './manifest.json', './icon-180.png'];
+const CACHE = 'wist-v35';
+const ASSETS = ['./', './index.html', './multiplayer.html', './manifest.json', './icon-180.png', './table.html', './css/game.css', './css/table.css', './js/game-engine.js', './js/game-ui.js', './js/table-ui.js', './js/replay-worker.js'];
 
 self.addEventListener('install', event => {
   event.waitUntil(
-    caches.open(CACHE).then(cache => cache.addAll(ASSETS))
+    caches.open(CACHE).then(cache => cache.addAll(ASSETS.map(url => new Request(url, { cache: 'reload' }))))
   );
   self.skipWaiting();
 });
@@ -25,6 +25,22 @@ self.addEventListener('fetch', event => {
   // bump; fall back to the cached copy when offline. Cache keys are stored
   // without the query string so links like index.html?players=4 or
   // multiplayer.html?join=XXXX still resolve offline.
+  // Own scripts and styles: network-first too. Cache-first kept serving the
+  // old game-ui.js after a deploy, so UI changes never showed up.
+  const own = new URL(req.url);
+  if (req.mode !== 'navigate' && own.origin === self.location.origin && /\.(js|css)$/.test(own.pathname)) {
+    event.respondWith(
+      fetch(req, { cache: 'no-cache' }).then(res => {
+        if (res.ok) {
+          const copy = res.clone();
+          caches.open(CACHE).then(cache => cache.put(req, copy));
+        }
+        return res;
+      }).catch(() => caches.match(req))
+    );
+    return;
+  }
+
   if (req.mode === 'navigate') {
     const bare = req.url.split('#')[0].split('?')[0];
     event.respondWith(
