@@ -340,6 +340,9 @@ button:disabled { cursor: default; }
 .bid.bust b { color: var(--bust); }
 .bid.none b { color: var(--chalk-3); }
 .bid.thinking { color: var(--brass); font-weight: 700; font-size: 13px; }
+/* Opponents' bids are read across the table: bigger than your own. */
+.seat .bid b { font-size: 21px; }
+@media (min-width: 900px) and (min-height: 700px) { .seat .bid { font-size: 14px; } .seat .bid b { font-size: 28px; } }
 .pips { display: inline-flex; align-items: center; gap: 2.5px; }
 .pip { width: 8px; height: 8px; border-radius: 50%; border: 1.5px solid var(--chalk-2); }
 .pip.won { background: var(--chalk); border-color: var(--chalk); }

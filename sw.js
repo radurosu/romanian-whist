@@ -1,4 +1,4 @@
-const CACHE = 'wist-v37';
+const CACHE = 'wist-v38';
 const ASSETS = ['./', './index.html', './multiplayer.html', './manifest.json', './icon-180.png', './table.html', './css/game.css', './css/table.css', './js/game-engine.js', './js/game-ui.js', './js/table-ui.js', './js/replay-worker.js'];
 
 self.addEventListener('install', event => {
