@@ -780,6 +780,12 @@ table.score-sheet {
 .trick-log-card { white-space: nowrap; font-weight: 600; }
 .trick-log-card.tl-winner { font-weight: 800; text-decoration: underline; text-decoration-color: var(--ink); text-underline-offset: 2px; }
 .trick-log-reason { color: var(--ink-soft); font-size: 12.5px; margin-left: auto; }
+.trick-log-trump { font-weight: 700; color: var(--ink); padding: 2px 0 4px; }
+.trick-log-row { align-items: flex-start; }
+.tl-play { display: inline-flex; flex-direction: column; align-items: center; min-width: 34px; line-height: 1.15; }
+.tl-play small { font-size: 10.5px; color: var(--ink-soft); white-space: nowrap; }
+.tl-play.tl-won small { color: var(--ink); font-weight: 700; }
+.trick-log-row .trick-log-reason { align-self: center; }
 
 /* Short landscape phones: shrink chrome, keep cards readable */
 @media (max-height: 520px) and (orientation: landscape) {

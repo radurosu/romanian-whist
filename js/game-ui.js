@@ -129,6 +129,12 @@ const RO = {
   ", led": ", a deschis",
   "trump {s}": "atu {s}",
   "high {s}": "cea mai mare {s}",
+  "Trump: {s}": "Atu: {s}",
+  "No trump this round": "Fără atu în această rundă",
+  "led": "a deschis",
+  "{who} trumped with {card}": "{who} a tăiat cu {card}",
+  "{who} won: highest {s}": "{who} a luat: cea mai mare {s}",
+  "{who} won: highest {s}, nobody trumped": "{who} a luat: cea mai mare {s}, nimeni n-a tăiat",
   "You took none, as bid: {pts}.": "N-ai luat nicio mână, cum ai licitat: {pts}.",
   "You made {bid}: {pts}.": "Ai făcut {bid}: {pts}.",
   "You took {won} on a bid of {bid}: {pts}.": "Ai luat {won} la licitația {bid}: {pts}.",
@@ -1390,21 +1396,36 @@ function winChanceRowHTML() {
   return h + '</tr></tfoot>';
 }
 
-function trickLogHTML(tricks, checks, open = false) {
+// Every trick of a round: the trump up top, each card with who played it,
+// and why the winner won in words (trumped, or highest of the led suit).
+function trickLogHTML(tricks, checks, open = false, trumpSuit = null) {
   if (!tricks || !tricks.length) return '';
   const katya = {};
   for (const x of playCheckFlagged(checks)) katya[x.trick] = x;
-  let html = `<details class="trick-log"${open ? ' open' : ''}><summary>${t('How the tricks went')}</summary><div class="trick-log-body">`;
+  const trumpLine = trumpSuit
+    ? t('Trump: {s}', { s: `<span class="${SUIT_COLOR[trumpSuit]}">${SUIT_SYMBOL[trumpSuit]}</span>` })
+    : t('No trump this round');
+  let html = `<details class="trick-log"${open ? ' open' : ''}><summary>${t('How the tricks went')}</summary><div class="trick-log-body">`
+    + `<p class="trick-log-trump">${trumpLine}</p>`;
   tricks.forEach((tr, i) => {
     html += `<div class="trick-log-row"><span class="trick-log-num">${i + 1}.</span>`;
     tr.entries.forEach((e, j) => {
       const isW = e.playerIndex === tr.winnerIndex;
-      html += `<span class="trick-log-card ${SUIT_COLOR[e.card.suit]}${isW ? ' tl-winner' : ''}" title="${playerLabel(e.playerIndex)}${j === 0 ? t(', led') : ''}">${e.card.rank}${SUIT_SYMBOL[e.card.suit]}</span>`;
+      html += `<span class="tl-play${isW ? ' tl-won' : ''}"><span class="trick-log-card ${SUIT_COLOR[e.card.suit]}${isW ? ' tl-winner' : ''}">${e.card.rank}${SUIT_SYMBOL[e.card.suit]}</span>`
+        + `<small>${playerLabel(e.playerIndex)}${j === 0 ? ` · ${t('led')}` : ''}</small></span>`;
     });
     if (katya[i]) html += `<span class="tl-katya" title="${escHTML(playCheckLineHTML(katya[i]).replace(/<[^>]+>/g, ''))}">Katya ${cardTxt(katya[i].pick)}</span>`;
-    html += `<span class="trick-log-reason">${playerLabel(tr.winnerIndex)}, ${tr.reason}</span></div>`;
+    html += `<span class="trick-log-reason">${trickReasonText(tr, trumpSuit)}</span></div>`;
   });
   return html + '</div></details>';
+}
+function trickReasonText(tr, trumpSuit) {
+  const led = tr.entries[0].card.suit;
+  const win = tr.entries.find(e => e.playerIndex === tr.winnerIndex).card;
+  const who = playerLabel(tr.winnerIndex), card = `${win.rank}${SUIT_SYMBOL[win.suit]}`;
+  if (trumpSuit && win.suit === trumpSuit && led !== trumpSuit) return t('{who} trumped with {card}', { who, card });
+  if (!trumpSuit || led === trumpSuit) return t('{who} won: highest {s}', { who, s: SUIT_SYMBOL[led] });
+  return t('{who} won: highest {s}, nobody trumped', { who, s: SUIT_SYMBOL[led] });
 }
 
 function openSheet(id, head, body, foot, closeOnBackdrop, stack = false) {
@@ -1520,7 +1541,7 @@ function showRoundReview(r) {
   const trumpStr = h.trumpSuit ? t('{s} trump', { s: SUIT_SYMBOL[h.trumpSuit] }) : t('no trump');
   const head = `<h2>${t('Round {n}', { n: r + 1 })}<small>${nOf(h.cardsPerPlayer, 'card', 'cards', 'carte', 'cărți')}, ${trumpStr}</small></h2>`
     + `<p class="sub">${roundSummary(h.roundScores, h.bids, h.tricksWon)}</p>${bidCheckHTML(r)}${playCheckHTML(r)}`;
-  openSheet('review-overlay', head, `<div class="review">${trickLogHTML(h.trickHistory, playChecks()[r], true)}</div>`,
+  openSheet('review-overlay', head, `<div class="review">${trickLogHTML(h.trickHistory, playChecks()[r], true, h.trumpSuit)}</div>`,
     `<span></span><button class="btn-ink" onclick="closeReview()">${t('Back')}</button>`, true, true);
 }
 function closeReview() { document.getElementById('review-overlay')?.remove(); }
@@ -1535,7 +1556,7 @@ function showRoundResult(roundScores) {
   const winNote = champ >= 0 ? `<p class="sub won-note">${t('You have clinched first place. Nobody can catch up, even with perfect rounds from here.')}</p>` : '';
   const head = `<h2>${t('Round {n}', { n: r + 1 })}<small>${nOf(G.cardsPerPlayer, 'card', 'cards', 'carte', 'cărți')}, ${trumpStr}</small></h2><p class="sub">${roundSummary(roundScores)}</p>${bidCheckHTML(r)}${playCheckHTML(r)}${outNote}${winNote}`;
   const body = sheetTableHTML({ highlight: (G.roundHistory || []).length - 1, winRow: true });
-  const foot = (trickLogHTML(G.trickHistory, playChecks()[r]) || '<span></span>') + (isLast
+  const foot = (trickLogHTML(G.trickHistory, playChecks()[r], false, G.trumpSuit) || '<span></span>') + (isLast
     ? `<button class="btn-ink" onclick="showGameOver()">${t('See final scores')}</button>`
     : out || champ >= 0
     ? `<span class="foot-links"><button onclick="nextRound()">${t('Play on')}</button><button class="btn-ink" onclick="showGameOver()">${t('End game')}</button></span>`
